@@ -1,0 +1,397 @@
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+}
+
+.app {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  background-color: #1a1a1a;
+  padding: 1rem;
+  border-bottom: 1px solid #333;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #fff;
+}
+
+.debug-panel {
+  position: fixed;
+  bottom: 1rem;
+  left: 1rem;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  z-index: 1000;
+  min-width: 200px;
+}
+
+.debug-panel div {
+  margin: 0.25rem 0;
+}
+
+.toolbar {
+  background-color: #1a1a1a;
+  padding: 0.5rem 1rem;
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid #333;
+}
+
+.toolbar button {
+  padding: 0.5rem 1rem;
+  background-color: #333;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.toolbar button:hover:not(:disabled) {
+  background-color: #444;
+}
+
+.toolbar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.main-area {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.canvas-wrapper {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.sidebar {
+  width: 250px;
+  flex-shrink: 0;
+  background-color: #1a1a1a;
+  border-right: 1px solid #333;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.main-area > .canvas-container {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.main-area > .sidebar {
+  flex-shrink: 0;
+}
+
+.toolbar button:hover {
+  background-color: #444;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 250px;
+  background-color: #1a1a1a;
+  border-right: 1px solid #333;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.sidebar h2 {
+  font-size: 1rem;
+  margin-bottom: 1rem;
+  color: #aaa;
+}
+
+.map-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.map-list li {
+  padding: 0.5rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.map-list li:hover {
+  background-color: #333;
+}
+
+.map-list li.active {
+  background-color: #4a9eff;
+  color: #fff;
+}
+
+.game-area {
+  flex: 1;
+  position: relative;
+  background-color: #000;
+}
+
+.canvas-container {
+  width: 100%;
+  height: 100%;
+}
+
+.drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  border: 2px dashed #444;
+  margin: 1rem;
+  border-radius: 8px;
+  color: #666;
+}
+
+.drop-zone.active {
+  border-color: #4a9eff;
+  background-color: rgba(74, 158, 255, 0.1);
+}
+
+.status-bar {
+  background-color: #1a1a1a;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  color: #888;
+  border-top: 1px solid #333;
+}
+
+/* Canvas styles */
+.canvas-wrapper {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.canvas-wrapper canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.canvas-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #fff;
+  font-size: 1rem;
+}
+
+.canvas-controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  color: #888;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  text-align: center;
+}
+
+/* Toolbar dropdown */
+.toolbar-dropdown {
+  position: relative;
+}
+
+.toolbar-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  background-color: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  min-width: 150px;
+  z-index: 100;
+}
+
+.toolbar-dropdown-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 1rem;
+  background: none;
+  border: none;
+  color: #fff;
+}
+
+.toolbar-dropdown-menu button:hover {
+  background-color: #333;
+}
+
+/* Piece Windows in Sidebar */
+.piece-window-item {
+  margin-bottom: 0.25rem;
+}
+
+.piece-window-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem;
+  background-color: #333;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.piece-window-header:hover {
+  background-color: #444;
+}
+
+.piece-window-header.active {
+  background-color: #4a9eff;
+}
+
+.piece-count {
+  font-size: 0.75rem;
+  color: #888;
+  margin-left: auto;
+  margin-right: 0.5rem;
+}
+
+.expand-icon {
+  font-size: 0.75rem;
+  color: #888;
+}
+
+.piece-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  background-color: #222;
+  border-radius: 0 0 4px 4px;
+}
+
+.piece-list li {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  border-bottom: 1px solid #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.piece-list li.more {
+  color: #888;
+  font-style: italic;
+}
+
+/* Piece Groups Grid */
+.piece-groups {
+  padding: 0.5rem;
+  background-color: #222;
+  border-radius: 0 0 4px 4px;
+}
+
+.piece-group {
+  margin-bottom: 1rem;
+}
+
+.piece-group:last-child {
+  margin-bottom: 0;
+}
+
+.group-header {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #aaa;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid #333;
+  margin-bottom: 0.5rem;
+}
+
+.piece-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 0.5rem;
+}
+
+.piece-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.25rem;
+  border-radius: 4px;
+  background-color: #2a2a2a;
+  cursor: pointer;
+}
+
+.piece-item:hover {
+  background-color: #333;
+}
+
+.piece-item img {
+  width: 60px;
+  height: 60px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.piece-no-image {
+  width: 60px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #333;
+  border-radius: 4px;
+  color: #666;
+  font-size: 1.5rem;
+}
+
+.piece-name {
+  font-size: 0.625rem;
+  color: #aaa;
+  text-align: center;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 0.25rem;
+}

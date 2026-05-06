@@ -1,0 +1,24 @@
+{
+  "name": "vassal-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "VASSAL Engine reimplemented in JavaScript",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pnpm -r run dev",
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "lint": "pnpm -r run lint"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0",
+    "fast-xml-parser": "^4.5.6",
+    "prettier": "^3.2.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

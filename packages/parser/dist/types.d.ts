@@ -24,6 +24,31 @@ export interface MapData {
         height: number;
     };
 }
+export interface HexGridData {
+    dx: number;
+    dy: number;
+    x0: number;
+    y0: number;
+    color: string;
+    snapTo: boolean;
+    visible: boolean;
+    dotsVisible: boolean;
+    cornersLegal: boolean;
+    edgesLegal: boolean;
+    sideways: boolean;
+}
+export interface ZoneData {
+    name: string;
+    path: string;
+    locationFormat: string;
+    highlightProperty: string;
+    useHighlight: boolean;
+    useParentGrid: boolean;
+}
+export interface ZonedGridData {
+    hexGrid?: HexGridData;
+    zones: ZoneData[];
+}
 export interface BoardData {
     name: string;
     imagePath: string;
@@ -35,6 +60,7 @@ export interface BoardData {
         width: number;
         height: number;
     };
+    grid?: ZonedGridData;
 }
 export interface PieceData {
     id: string;

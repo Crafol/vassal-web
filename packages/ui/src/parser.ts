@@ -20,9 +20,40 @@ export interface PredefinedSetupData {
   useFile?: boolean;
 }
 
+export interface HexGridData {
+  dx: number;
+  dy: number;
+  x0: number;
+  y0: number;
+  color: string;
+  visible: boolean;
+  snapTo: boolean;
+  dotsVisible?: boolean;
+  cornersLegal?: boolean;
+  edgesLegal?: boolean;
+  sideways: boolean;
+}
+
+export interface ZoneData {
+  name: string;
+  path: string;
+  locationFormat?: string;
+  highlightProperty?: string;
+  useHighlight?: boolean;
+  useParentGrid?: boolean;
+}
+
+export interface ZonedGridData {
+  hexGrid?: HexGridData;
+  zones: ZoneData[];
+}
+
 export interface BoardData {
   name: string;
   imagePath: string;
+  x?: number;
+  y?: number;
+  grid?: ZonedGridData;
 }
 
 export interface MapData {
@@ -125,20 +156,93 @@ function extractMaps(xmlData: VassalElement): MapData[] {
     const boardPickers = findElements(mapEl, 'VASSAL.build.module.map.BoardPicker');
     console.log('extractMaps: BoardPicker in', mapName, ':', boardPickers.length);
     
+    if (boardPickers.length > 0) {
+      // Debug setup attribute
+      console.log('extractMaps: BoardPicker attrs:', JSON.stringify(boardPickers[0].attributes));
+    }
+    
     for (const bp of boardPickers) {
       // Find boards within BoardPicker - type is "VASSAL.build.module.map.boardPicker.Board"
-      const boards = findElements(bp, 'VASSAL.build.module.map.boardPicker.Board');
+const boards = findElements(bp, 'VASSAL.build.module.map.boardPicker.Board');
       console.log('extractMaps: boards in', mapName, ':', boards.length);
       if (boards.length > 0) {
-        console.log('extractMaps: first board:', boards[0].attributes);
+        console.log('extractMaps: ALL boards in', mapName, ':', boards.map(b => b.attributes['name']));
       }
-      
+
       const mapData: MapData = {
         name: mapName,
-        boards: boards.map(b => ({
-          name: b.attributes['name'] || 'Unnamed Board',
-          imagePath: b.attributes['image'] || '',
-        })).filter(b => b.imagePath),
+        boards: boards.map(b => {
+          // Find ZonedGrid for this board - search ALL children
+          const zg = findElements(b, 'VASSAL.build.module.map.boardPicker.board.ZonedGrid');
+          const hg = findElements(b, 'VASSAL.build.module.map.boardPicker.board.HexGrid');
+          console.log('extractMaps: board', b.attributes['name'], 'zg found:', zg.length, 'hg found:', hg.length);
+
+          // Log all children of board for debugging
+          if (zg.length === 0 && hg.length === 0) {
+            const allTypes = new Set<string>();
+            const collect = (el: VassalElement) => {
+              if (el.type) allTypes.add(el.type);
+              for (const c of el.children) collect(c);
+            };
+            collect(b);
+            console.log('extractMaps: board child types:', [...allTypes]);
+          }
+
+          let grid: ZonedGridData | undefined;
+
+          // Extract HexGrid
+          if (hg.length > 0) {
+            const attrs = hg[0].attributes;
+            const hexGrid: HexGridData = {
+              dx: parseFloat(attrs['dx'] || '0'),
+              dy: parseFloat(attrs['dy'] || '0'),
+              x0: parseFloat(attrs['x0'] || '0'),
+              y0: parseFloat(attrs['y0'] || '0'),
+              color: attrs['color'] || '0,0,0',
+              visible: attrs['visible'] !== 'false',
+              snapTo: attrs['snapTo'] === 'true',
+              dotsVisible: attrs['dotsVisible'] === 'true',
+              cornersLegal: attrs['cornersLegal'] !== 'false',
+              edgesLegal: attrs['edgesLegal'] !== 'false',
+              sideways: attrs['sideways'] === 'true',
+            };
+            grid = { hexGrid, zones: [] };
+          }
+
+          // If we found ZonedGrid, also extract zones
+          if (zg.length > 0) {
+            const zones: ZoneData[] = [];
+            const zoneElements = findElements(zg[0], 'VASSAL.build.module.map.boardPicker.board.mapgrid.Zone');
+
+            for (const zoneEl of zoneElements) {
+              const zone: ZoneData = {
+                name: zoneEl.attributes['name'] || '',
+                path: zoneEl.attributes['path'] || '',
+                locationFormat: zoneEl.attributes['locationFormat'],
+                highlightProperty: zoneEl.attributes['highlightProperty'],
+                useHighlight: zoneEl.attributes['useHighlight'] === 'true',
+                useParentGrid: zoneEl.attributes['useParentGrid'] === 'true',
+              };
+              if (zone.name && zone.path) {
+                zones.push(zone);
+              }
+            }
+
+            if (zones.length > 0) {
+              if (!grid) {
+                grid = { zones };
+              } else {
+                grid.zones = zones;
+              }
+            }
+          }
+
+          return {
+            name: b.attributes['name'] || 'Unnamed Board',
+            imagePath: b.attributes['image'] || '',
+            grid,
+          };
+        }).filter(b => b.imagePath),
       };
       
       if (mapData.boards.length > 0) {
@@ -306,11 +410,19 @@ export async function parseVmodFile(file: File): Promise<ParsedModule> {
   const images = new Map<string, string>();
   const imageRegex = /\.(png|jpg|jpeg|gif)$/i;
   
+  // Debug first few image paths
+  let debugCount = 0;
+  
   for (const [path, file] of Object.entries(zip.files)) {
     if (imageRegex.test(path) && !file.dir) {
       const data = await file.async('blob');
       const url = URL.createObjectURL(data);
       images.set(path, url);
+      
+      // Debug: show first 10 image paths
+      if (debugCount++ < 10) {
+        console.log('Parse: image path in zip:', path);
+      }
     }
   }
   console.log('Parse: images extracted:', images.size);

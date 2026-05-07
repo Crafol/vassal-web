@@ -145,6 +145,8 @@ export class VassalParser {
                         height: parseInt(boardEl.attributes['height'], 10),
                     };
                 }
+                // Extract ZonedGrid (HexGrid + Zones)
+                board.grid = this.extractZonedGrid(boardEl);
                 map.boards.push(board);
             }
             // Extract pieces
@@ -257,6 +259,63 @@ export class VassalParser {
             });
         }
         return props;
+    }
+    /**
+     * Extract ZonedGrid data (HexGrid + Zones) from a board element
+     */
+    extractZonedGrid(boardEl) {
+        // Look for ZonedGrid element - try both prefixed and non-prefixed versions
+        const zonedGridEls = boardEl.children.filter((el) => el.type === 'VASSAL.build.module.map.boardPicker.board.ZonedGrid' ||
+            el.type === 'ZonedGrid');
+        if (zonedGridEls.length === 0) {
+            return undefined;
+        }
+        const zonedGridEl = zonedGridEls[0];
+        const result = {
+            hexGrid: undefined,
+            zones: [],
+        };
+        // Extract HexGrid
+        const hexGridEls = zonedGridEl.children.filter((el) => el.type === 'VASSAL.build.module.map.boardPicker.board.HexGrid' ||
+            el.type === 'HexGrid');
+        if (hexGridEls.length > 0) {
+            const hexEl = hexGridEls[0];
+            const hexGrid = {
+                dx: parseFloat(hexEl.attributes['dx'] || '0'),
+                dy: parseFloat(hexEl.attributes['dy'] || '0'),
+                x0: parseFloat(hexEl.attributes['x0'] || '0'),
+                y0: parseFloat(hexEl.attributes['y0'] || '0'),
+                color: hexEl.attributes['color'] || '0,0,0',
+                snapTo: hexEl.attributes['snapTo'] === 'true',
+                visible: hexEl.attributes['visible'] !== 'false', // default true
+                dotsVisible: hexEl.attributes['dotsVisible'] === 'true',
+                cornersLegal: hexEl.attributes['cornersLegal'] !== 'false',
+                edgesLegal: hexEl.attributes['edgesLegal'] !== 'false',
+                sideways: hexEl.attributes['sideways'] === 'true',
+            };
+            result.hexGrid = hexGrid;
+        }
+        // Extract Zones
+        const zoneEls = zonedGridEl.children.filter((el) => el.type === 'VASSAL.build.module.map.boardPicker.board.mapgrid.Zone' ||
+            el.type === 'Zone');
+        for (const zoneEl of zoneEls) {
+            const zone = {
+                name: zoneEl.attributes['name'] || '',
+                path: zoneEl.attributes['path'] || '',
+                locationFormat: zoneEl.attributes['locationFormat'] || '$name$',
+                highlightProperty: zoneEl.attributes['highlightProperty'] || '',
+                useHighlight: zoneEl.attributes['useHighlight'] === 'true',
+                useParentGrid: zoneEl.attributes['useParentGrid'] === 'true',
+            };
+            if (zone.name && zone.path) {
+                result.zones.push(zone);
+            }
+        }
+        // Only return if we have hexGrid or zones
+        if (!result.hexGrid && result.zones.length === 0) {
+            return undefined;
+        }
+        return result;
     }
     generateId() {
         return 'piece_' + Math.random().toString(36).substring(2, 9);

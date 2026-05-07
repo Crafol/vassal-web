@@ -7,11 +7,39 @@ export interface RenderOptions {
     height: number;
     backgroundColor?: string;
 }
+export interface HexGridData {
+    dx: number;
+    dy: number;
+    x0?: number;
+    y0?: number;
+    color?: string;
+    snapTo?: boolean;
+    visible?: boolean;
+    dotsVisible?: boolean;
+    cornersLegal?: boolean;
+    edgesLegal?: boolean;
+    sideways?: boolean;
+}
+export interface ZoneData {
+    name: string;
+    path: string;
+    locationFormat?: string;
+    highlightProperty?: string;
+    useHighlight?: boolean;
+    useParentGrid?: boolean;
+}
+export interface ZonedGridData {
+    hexGrid?: HexGridData;
+    zones?: ZoneData[];
+}
 export interface BoardLayer {
     name: string;
     imageUrl: string;
     x: number;
     y: number;
+    width?: number;
+    height?: number;
+    grid?: ZonedGridData;
 }
 export interface PlacedPiece {
     id: string;
@@ -56,11 +84,22 @@ export declare class CanvasManager {
     private panX;
     private panY;
     onSelectionChange?: SelectionCallback;
+    private gridInfo;
     constructor(canvasElement: HTMLCanvasElement, options: RenderOptions);
     /**
      * Add board image to canvas
      */
     addBoard(layer: BoardLayer): Promise<fabric.Image>;
+    /**
+     * Draw hexagonal grid on canvas
+     * Uses RED color (#FF0000) for visibility
+     */
+    drawHexGrid(grid: HexGridData, boardX?: number, boardY?: number, boardWidth?: number, boardHeight?: number): void;
+    /**
+     * Draw zone outlines on canvas
+     * Uses a different color (e.g., blue) for zones
+     */
+    drawZones(zones: ZoneData[]): void;
     /**
      * Add image from base64 data URL
      */
@@ -73,6 +112,18 @@ export declare class CanvasManager {
      * Add a game piece (counter) to the canvas
      */
     addPiece(pieceId: string, pieceName: string, imageUrl: string, x: number, y: number): Promise<PlacedPiece | null>;
+    /**
+     * Snap a position to the nearest hex center
+     * Returns the position snapped to the hex grid, or original position if no grid
+     */
+    snapToNearestHex(x: number, y: number): {
+        x: number;
+        y: number;
+    };
+    /**
+     * Round fractional hex coordinates to nearest integer hex
+     */
+    private hexRound;
     /**
      * Set zoom level
      */
@@ -155,6 +206,7 @@ export declare function extractMapData(parsedModule: {
         boards: Array<{
             name: string;
             imagePath: string;
+            grid?: ZonedGridData;
         }>;
     }>;
     images: Map<string, string>;

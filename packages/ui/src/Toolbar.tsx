@@ -19,6 +19,7 @@ interface PieceWindow {
 
 interface ToolbarProps {
   onLoadModule: () => void;
+  onLoadGame?: () => void;
   onSaveGame?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
@@ -41,6 +42,7 @@ interface Setup {
 
 export function Toolbar({
   onLoadModule,
+  onLoadGame,
   onSaveGame,
   onUndo,
   onRedo,
@@ -73,6 +75,7 @@ export function Toolbar({
   return (
     <div className="toolbar">
       <button onClick={onLoadModule}>Open Module</button>
+      <button disabled={!enabled} onClick={onLoadGame}>Load</button>
       <button disabled={!enabled} onClick={onSaveGame}>Save</button>
       <button disabled={!enabled} onClick={onUndo}>Undo</button>
       <button disabled={!enabled} onClick={onRedo}>Redo</button>

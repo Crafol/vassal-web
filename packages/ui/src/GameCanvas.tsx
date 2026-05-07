@@ -60,10 +60,15 @@ export const GameCanvas = forwardRef<CanvasManagerHandle, GameCanvasProps>(funct
       
       console.log('GameCanvas: drop at visual', screenX, screenY, '-> world', x, y);
       
+      const pieceImagePath = piece.imagePath || '';
       const imgSrc = 
-        (piece.imagePath && images.get(piece.imagePath)) ||
-        (piece.imagePath && images.get('images/' + piece.imagePath)) ||
+        (pieceImagePath && images.get(pieceImagePath)) ||
+        (pieceImagePath && images.get('images/' + pieceImagePath)) ||
         '';
+      
+      if (!imgSrc && pieceImagePath) {
+        console.log('GameCanvas: NOT FOUND image:', pieceImagePath);
+      }
       
       managerRef.current.addPiece(piece.id, piece.name, imgSrc, x, y).then((placed) => {
         if (placed) {
@@ -89,6 +94,12 @@ export const GameCanvas = forwardRef<CanvasManagerHandle, GameCanvasProps>(funct
 
     const container = canvasRef.current.parentElement;
     if (!container) return;
+
+    // Dispose old manager first
+    if (managerRef.current) {
+      managerRef.current.dispose();
+      managerRef.current = null;
+    }
 
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 600;
@@ -116,7 +127,11 @@ export const GameCanvas = forwardRef<CanvasManagerHandle, GameCanvasProps>(funct
     });
 
     return () => {
-      managerRef.current?.dispose();
+      // Cleanup on unmount
+      if (managerRef.current) {
+        managerRef.current.dispose();
+        managerRef.current = null;
+      }
     };
   }, [propBoards, onSelectionChange]);
 

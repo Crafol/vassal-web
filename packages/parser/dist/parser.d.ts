@@ -29,6 +29,10 @@ export declare class VassalParser {
     private extractDecks;
     private extractDice;
     private extractGlobalProperties;
+    /**
+     * Extract ZonedGrid data (HexGrid + Zones) from a board element
+     */
+    private extractZonedGrid;
     private generateId;
 }
 /**

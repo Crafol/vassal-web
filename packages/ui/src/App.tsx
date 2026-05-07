@@ -47,14 +47,41 @@ function App() {
       
       if (mapData) {
         console.log('App: mapData boards:', mapData.boards);
-        const layers = mapData.boards.map(b => ({
-          name: b.name,
-          imageUrl: module.images.get(b.imagePath) || module.images.get('images/' + b.imagePath) || '',
-          x: 0,
-          y: 0,
-        })).filter(b => b.imageUrl); // Only boards with images
-        console.log('App: boards:', layers);
-        setBoards(layers);
+        const layerData = mapData.boards.map(b => {
+          const imageUrl = module.images.get(b.imagePath) || module.images.get('images/' + b.imagePath) || '';
+          return {
+            name: b.name,
+            imageUrl,
+            x: 0,
+            y: 0,
+            grid: b.grid,
+          };
+        }).filter(b => b.imageUrl);
+
+        // Cargar imagenes para obtener dimensiones reales
+        const loadImageDimensions = async () => {
+          const result = await Promise.all(layerData.map(async (layer) => {
+            if (!layer.imageUrl) return layer;
+            try {
+              const img = new Image();
+              await new Promise((resolve, reject) => {
+                img.onload = resolve;
+                img.onerror = reject;
+                img.src = layer.imageUrl;
+              });
+              return { ...layer, width: img.naturalWidth, height: img.naturalHeight };
+            } catch (e) {
+              console.log('App: failed to load image dimensions for', layer.name);
+              return layer;
+            }
+          }));
+          return result;
+        };
+
+        loadImageDimensions().then((layers: BoardLayer[]) => {
+          console.log('App: boards with dimensions:', layers.map(l => ({ name: l.name, w: l.width, h: l.height, hasGrid: !!l.grid })));
+          setBoards(layers);
+        });
       }
     }
   }, [module, activeMap]);
@@ -287,7 +314,7 @@ function App() {
     if (module && activeMap) {
       return (
         <>
-          <GameCanvas ref={canvasRef} images={module.images} mapName={activeMap} boards={boards} onSelectionChange={handleSelectionChange} />
+          <GameCanvas key={activeMap} ref={canvasRef} images={module.images} mapName={activeMap} boards={boards} onSelectionChange={handleSelectionChange} />
           <SelectionInfoPanel info={selectionInfo} />
         </>
       );
@@ -311,6 +338,7 @@ function App() {
 
       <Toolbar
         onLoadModule={handleLoadModule}
+        onLoadGame={handleLoadGame}
         onSaveGame={handleSaveGame}
         onUndo={() => {}}
         onRedo={() => {}}

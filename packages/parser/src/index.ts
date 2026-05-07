@@ -11,4 +11,7 @@ export type {
   MapData,
   BoardData,
   PieceData,
+  HexGridData,
+  ZoneData,
+  ZonedGridData,
 } from './types.js';

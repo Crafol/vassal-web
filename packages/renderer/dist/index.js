@@ -17,6 +17,10 @@ export class CanvasManager {
     // Mouse-over popup state
     mouseOverPopup = null;
     mouseOverTimeout = null;
+    // Stacking system
+    stacks = new Map();
+    stackCounter = 0;
+    STACK_THRESHOLD = 30; // pixels - piezas más cerca que esto se consideran stack
     constructor(canvasElement, options) {
         this.canvas = new fabric.Canvas(canvasElement, {
             width: options.width,
@@ -233,6 +237,37 @@ export class CanvasManager {
             }
         }
         return true; // Default: use parent grid
+    }
+    /**
+     * Find existing stack at position
+     */
+    findStackAtPosition(x, y) {
+        for (const stack of this.stacks.values()) {
+            const dx = Math.abs(stack.snapX - x);
+            const dy = Math.abs(stack.snapY - y);
+            if (dx < this.STACK_THRESHOLD && dy < this.STACK_THRESHOLD) {
+                console.log(`[STACK] findStackAtPosition: found stack ${stack.id} at (${Math.round(x)}, ${Math.round(y)})`);
+                return stack;
+            }
+        }
+        return null;
+    }
+    /**
+     * Find nearby pieces at position (for creating new stack)
+     */
+    findNearbyPieces(x, y) {
+        const nearby = [];
+        for (const obj of this.canvas.getObjects()) {
+            if (obj.pieceId && obj.type === 'image') {
+                const dx = Math.abs((obj.left || 0) - x);
+                const dy = Math.abs((obj.top || 0) - y);
+                if (dx < this.STACK_THRESHOLD && dy < this.STACK_THRESHOLD) {
+                    nearby.push(obj);
+                }
+            }
+        }
+        console.log(`[STACK] findNearbyPieces: found ${nearby.length} pieces near (${Math.round(x)}, ${Math.round(y)})`);
+        return nearby;
     }
     /**
      * Add a game piece (counter) to the canvas
@@ -659,8 +694,82 @@ export class CanvasManager {
                     left: snapped.x,
                     top: snapped.y,
                 });
+                // Handle stacking - find nearby pieces and create/join stack
+                const nearby = this.findNearbyPieces(snapped.x, snapped.y);
+                const currentPieceId = obj.pieceId;
+                const currentStackId = obj.stackId;
+                const otherPieces = nearby.filter(p => p.pieceId !== currentPieceId);
+                // Check if piece was in a stack and needs to leave it
+                if (currentStackId) {
+                    const oldStack = this.stacks.get(currentStackId);
+                    if (oldStack) {
+                        // Calculate distance from stack center
+                        const dx = Math.abs((obj.left || 0) - oldStack.snapX);
+                        const dy = Math.abs((obj.top || 0) - oldStack.snapY);
+                        // If moved far enough (> threshold), leave the stack
+                        if (dx > this.STACK_THRESHOLD || dy > this.STACK_THRESHOLD) {
+                            console.log(`[STACK] Piece ${currentPieceId} moved out of stack ${currentStackId} (dx=${Math.round(dx)}, dy=${Math.round(dy)})`);
+                            this.removePieceFromStack(currentPieceId, oldStack);
+                        }
+                    }
+                }
+                // Now handle joining/creating a stack at new position
+                if (otherPieces.length > 0) {
+                    // Check if there's an existing stack we can join
+                    let existingStack = this.findStackAtPosition(snapped.x, snapped.y);
+                    if (existingStack) {
+                        // Join existing stack
+                        console.log(`[STACK] Joining existing stack ${existingStack.id} with ${otherPieces.length + 1} pieces`);
+                    }
+                    else {
+                        // Create new stack
+                        this.stackCounter++;
+                        const stackId = `stack-${this.stackCounter}`;
+                        existingStack = {
+                            id: stackId,
+                            snapX: snapped.x,
+                            snapY: snapped.y,
+                            pieces: [],
+                        };
+                        this.stacks.set(stackId, existingStack);
+                        console.log(`[STACK] Created new stack ${stackId} with ${otherPieces.length + 1} pieces`);
+                    }
+                    // Add current piece to stack
+                    existingStack.pieces.push({
+                        pieceId: currentPieceId,
+                        pieceName: obj.pieceName,
+                        imageUrl: obj.imageUrl,
+                        fabricObject: obj,
+                    });
+                    obj.stackId = existingStack.id;
+                    // Add other pieces to stack too
+                    for (const otherPiece of otherPieces) {
+                        const otherId = otherPiece.pieceId;
+                        if (!existingStack.pieces.find(p => p.pieceId === otherId)) {
+                            existingStack.pieces.push({
+                                pieceId: otherId,
+                                pieceName: otherPiece.pieceName,
+                                imageUrl: otherPiece.imageUrl,
+                                fabricObject: otherPiece,
+                            });
+                            otherPiece.stackId = existingStack.id;
+                        }
+                    }
+                    console.log(`[STACK] Stack ${existingStack.id} now has ${existingStack.pieces.length} pieces`);
+                    // Check if stack should be dissolved (less than 2 pieces)
+                    if (existingStack.pieces.length < 2) {
+                        console.log(`[STACK] Stack has ${existingStack.pieces.length} piece(s), dissolving`);
+                        this.dissolveStack(existingStack);
+                    }
+                    else {
+                        // Reorganize pieces in staircase pattern
+                        this.reorganizeStackPieces(existingStack);
+                        // Show stack indicator
+                        this.showStackIndicator(existingStack);
+                    }
+                }
                 this.canvas.renderAll();
-                console.log('CanvasManager: snapped on drag end', { id: obj.pieceId, snapped, shouldUseGrid });
+                console.log('CanvasManager: snapped on drag end', { id: obj.pieceId, snapped, shouldUseGrid, stackSize: otherPieces.length + 1 });
             }
         });
         // Also restore when selection cleared
@@ -777,6 +886,146 @@ export class CanvasManager {
             this.mouseOverPopup = null;
             this.canvas.renderAll();
         }
+    }
+    /**
+     * Calculate offset for stacking pieces in a staircase pattern
+     * Each piece is offset slightly up and to the right to show pieces underneath
+     */
+    calculateStackOffset(index, pieceWidth = 50, pieceHeight = 50) {
+        const offsetX = pieceWidth * 0.06; // 6% right per piece
+        const offsetY = pieceHeight * 0.08; // 8% up per piece (negative = up)
+        return {
+            x: index * offsetX,
+            y: -index * offsetY,
+        };
+    }
+    /**
+     * Reorganize pieces in a stack to form a staircase
+     * Ordered by current Z position: lowest Z piece = bottom of stack (back),
+     * highest Z piece = top of stack (front)
+     */
+    reorganizeStackPieces(stack) {
+        // Get all objects from canvas to determine current Z order
+        const canvasObjects = this.canvas.getObjects();
+        // Sort pieces by their current Z position in canvas
+        // Lowest Z index = at back, highest Z index = at front
+        const sortedPieces = [...stack.pieces].sort((a, b) => {
+            const indexA = canvasObjects.indexOf(a.fabricObject);
+            const indexB = canvasObjects.indexOf(b.fabricObject);
+            return indexA - indexB;
+        });
+        // Assign positions in staircase based on Z order
+        for (let i = 0; i < sortedPieces.length; i++) {
+            const piece = sortedPieces[i];
+            const obj = piece.fabricObject;
+            const offset = this.calculateStackOffset(i, (obj.width || 50) * (obj.scaleX || 1), (obj.height || 50) * (obj.scaleY || 1));
+            obj.set({
+                left: stack.snapX + offset.x,
+                top: stack.snapY + offset.y,
+            });
+            // Store stack index for later reference
+            obj.stackIndex = i;
+            obj.stackOffset = offset;
+        }
+        // Now re-order Z: sortedPieces[0] should be at back, sortedPieces[length-1] at front
+        for (let i = 0; i < sortedPieces.length; i++) {
+            const piece = sortedPieces[i];
+            const fabricObj = piece.fabricObject;
+            // Set Z order: first piece goes to back, last to front
+            fabricObj.moveTo?.(i);
+        }
+        // Make sure indicator stays at top
+        const existingIndicator = this.canvas.getObjects().find(o => o.stackIndicatorId === stack.id);
+        if (existingIndicator) {
+            existingIndicator.moveTo?.(this.canvas.getObjects().length - 1);
+        }
+        this.canvas.renderAll();
+        console.log(`[STACK] Reorganized ${stack.pieces.length} pieces in staircase pattern with Z ordering (bottom Z = back)`);
+    }
+    /**
+     * Remove stack when it has less than 2 pieces
+     */
+    dissolveStack(stack) {
+        // Remove stack reference from all pieces first
+        for (const piece of stack.pieces) {
+            piece.fabricObject.stackId = undefined;
+            piece.fabricObject.stackOffset = undefined;
+        }
+        // Remove the stack from the map
+        this.stacks.delete(stack.id);
+        // Remove visual indicator
+        const existingIndicator = this.canvas.getObjects().find(o => o.stackIndicatorId === stack.id);
+        if (existingIndicator) {
+            this.canvas.remove(existingIndicator);
+        }
+        console.log(`[STACK] Dissolved stack ${stack.id}`);
+    }
+    /**
+     * Remove a piece from its stack when moved far enough
+     * Returns true if piece was removed
+     */
+    removePieceFromStack(pieceId, currentStack) {
+        // Find piece in stack
+        const pieceIndex = currentStack.pieces.findIndex(p => p.pieceId === pieceId);
+        if (pieceIndex === -1)
+            return false;
+        // Remove from array
+        const [removedPiece] = currentStack.pieces.splice(pieceIndex, 1);
+        // Clear stack references from the piece
+        removedPiece.fabricObject.stackId = undefined;
+        removedPiece.fabricObject.stackIndex = undefined;
+        removedPiece.fabricObject.stackOffset = undefined;
+        console.log(`[STACK] Removed piece ${pieceId} from stack ${currentStack.id}, remaining: ${currentStack.pieces.length}`);
+        // If stack has less than 2 pieces, dissolve it
+        if (currentStack.pieces.length < 2) {
+            this.dissolveStack(currentStack);
+            return true;
+        }
+        // Reorganize remaining pieces
+        this.reorganizeStackPieces(currentStack);
+        this.showStackIndicator(currentStack);
+        return true;
+    }
+    /**
+     * Show visual indicator for stack (circle around stacked pieces)
+     */
+    showStackIndicator(stack) {
+        // Remove existing indicator for this stack
+        const existingIndicator = this.canvas.getObjects().find(o => o.stackIndicatorId === stack.id);
+        if (existingIndicator) {
+            this.canvas.remove(existingIndicator);
+        }
+        // Find bounding box of all pieces in stack
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const piece of stack.pieces) {
+            const obj = piece.fabricObject;
+            const w = (obj.width || 50) * (obj.scaleX || 1);
+            const h = (obj.height || 50) * (obj.scaleY || 1);
+            minX = Math.min(minX, (obj.left || 0) - w / 2);
+            minY = Math.min(minY, (obj.top || 0) - h / 2);
+            maxX = Math.max(maxX, (obj.left || 0) + w / 2);
+            maxY = Math.max(maxY, (obj.top || 0) + h / 2);
+        }
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+        const radius = Math.max(maxX - minX, maxY - minY) / 2 + 10;
+        const indicator = new fabric.Circle({
+            left: centerX,
+            top: centerY,
+            radius: radius,
+            fill: 'transparent',
+            stroke: '#FF6600',
+            strokeWidth: 3,
+            originX: 'center',
+            originY: 'center',
+            selectable: false,
+            evented: false,
+            opacity: 0.8,
+        });
+        indicator.stackIndicatorId = stack.id;
+        this.canvas.add(indicator);
+        this.canvas.renderAll();
+        console.log(`[STACK] Showed indicator for stack ${stack.id} with ${stack.pieces.length} pieces`);
     }
 }
 /**

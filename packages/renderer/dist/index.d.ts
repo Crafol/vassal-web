@@ -32,6 +32,18 @@ export interface ZonedGridData {
     hexGrid?: HexGridData;
     zones?: ZoneData[];
 }
+export interface StackPiece {
+    pieceId: string;
+    pieceName: string;
+    imageUrl: string;
+    fabricObject: fabric.FabricImage;
+}
+export interface Stack {
+    id: string;
+    snapX: number;
+    snapY: number;
+    pieces: StackPiece[];
+}
 export interface BoardLayer {
     name: string;
     imageUrl: string;
@@ -88,6 +100,9 @@ export declare class CanvasManager {
     private zones;
     private mouseOverPopup;
     private mouseOverTimeout;
+    private stacks;
+    private stackCounter;
+    private readonly STACK_THRESHOLD;
     constructor(canvasElement: HTMLCanvasElement, options: RenderOptions);
     /**
      * Add board image to canvas
@@ -116,6 +131,14 @@ export declare class CanvasManager {
      * Returns the zone's useParentGrid setting, or true if no zone found (default behavior)
      */
     private findZoneAtPosition;
+    /**
+     * Find existing stack at position
+     */
+    private findStackAtPosition;
+    /**
+     * Find nearby pieces at position (for creating new stack)
+     */
+    private findNearbyPieces;
     /**
      * Add a game piece (counter) to the canvas
      */
@@ -207,6 +230,30 @@ export declare class CanvasManager {
     private showMouseOverPopup;
     private showTextPopup;
     private hideMouseOverPopup;
+    /**
+     * Calculate offset for stacking pieces in a staircase pattern
+     * Each piece is offset slightly up and to the right to show pieces underneath
+     */
+    private calculateStackOffset;
+    /**
+     * Reorganize pieces in a stack to form a staircase
+     * Ordered by current Z position: lowest Z piece = bottom of stack (back),
+     * highest Z piece = top of stack (front)
+     */
+    private reorganizeStackPieces;
+    /**
+     * Remove stack when it has less than 2 pieces
+     */
+    private dissolveStack;
+    /**
+     * Remove a piece from its stack when moved far enough
+     * Returns true if piece was removed
+     */
+    private removePieceFromStack;
+    /**
+     * Show visual indicator for stack (circle around stacked pieces)
+     */
+    private showStackIndicator;
 }
 /**
  * Extract map data from parsed module

@@ -101,9 +101,12 @@ export class CanvasManager {
     cornersLegal: boolean;
     edgesLegal: boolean;
     boardX: number;
-    boardY: number;
+boardY: number;
   } | null = null;
-
+  
+  // Zones for useParentGrid logic
+  private zones: ZoneData[] = [];
+  
   // Mouse-over popup state
   private mouseOverPopup: fabric.Group | null = null;
   private mouseOverTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -161,6 +164,14 @@ export class CanvasManager {
           };
           console.log('CanvasManager: gridInfo saved for snapping:', this.gridInfo);
         }
+        
+        // Save zones for useParentGrid logic
+        if (layer.grid?.zones) {
+          this.zones = layer.grid.zones;
+          console.log('CanvasManager: saved zones:', this.zones.length, this.zones.map(z => ({ name: z.name, useParentGrid: z.useParentGrid })));
+        } else {
+          this.zones = [];
+        }
 
         resolve(img);
       }).catch(reject);
@@ -172,9 +183,15 @@ export class CanvasManager {
    * Uses RED color (#FF0000) for visibility
    */
   drawHexGrid(grid: HexGridData, boardX: number = 0, boardY: number = 0, boardWidth: number = 2000, boardHeight: number = 2000): void {
-    const { dx, dy, x0 = 0, y0 = 0, sideways = false, dotsVisible = false } = grid;
-    console.log('drawHexGrid: params', { dx, dy, x0, y0, sideways, boardX, boardY, boardWidth, boardHeight });
-
+    const { dx, dy, x0 = 0, y0 = 0, sideways = false, dotsVisible = false, visible = true, color = '#FF0000' } = grid;
+    console.log('drawHexGrid: params', { dx, dy, x0, y0, sideways, boardX, boardY, boardWidth, boardHeight, visible, color, dotsVisible });
+    
+    // If visible === false, skip drawing but keep snapTo functionality
+    if (!visible) {
+      console.log('drawHexGrid: grid hidden (visible=false), skipping draw but snapTo remains active');
+      return;
+    }
+    
     // VASSAL: sideways=true → Flat Topped (rows horizontal), sideways=false → Pointy Topped
     const isFlatTop = sideways;
 
@@ -230,7 +247,7 @@ export class CanvasManager {
         }
 
         const hexPoly = new fabric.Polygon(points, {
-          stroke: '#FF0000',
+          stroke: color,
           strokeWidth: 1.5,
           fill: 'transparent',
           selectable: false,
@@ -245,7 +262,7 @@ export class CanvasManager {
             left: centerX,
             top: centerY,
             radius: 3,
-            fill: '#FF0000',
+            fill: color,
             originX: 'center',
             originY: 'center',
             selectable: false,
@@ -322,6 +339,36 @@ export class CanvasManager {
   }
 
   /**
+   * Find zone at position
+   * Returns the zone's useParentGrid setting, or true if no zone found (default behavior)
+   */
+  private findZoneAtPosition(x: number, y: number): boolean {
+    for (const zone of this.zones) {
+      // Parse zone path: "x1,y1;x2,y2;x3,y3;x4,y4" - rectangle
+      const points = zone.path.split(';').map(pair => {
+        const [px, py] = pair.split(',').map(Number);
+        return { x: px, y: py };
+      });
+      
+      if (points.length >= 4) {
+        // Simple rectangle check: find min/max
+        const xs = points.map(p => p.x);
+        const ys = points.map(p => p.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        
+        if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+          console.log(`[ZONE] Piece at (${Math.round(x)}, ${Math.round(y)}) in zone "${zone.name}" -> useParentGrid: ${zone.useParentGrid}`);
+          return zone.useParentGrid !== false; // default true
+        }
+      }
+    }
+    return true; // Default: use parent grid
+  }
+
+  /**
    * Add a game piece (counter) to the canvas
    */
   async addPiece(
@@ -336,12 +383,17 @@ export class CanvasManager {
       return null;
     }
 
-    // Snap to grid if enabled
-    const snappedPos = this.snapToNearestHex(x, y);
+    // Check zone at position to determine if should use grid
+    const shouldUseGrid = this.findZoneAtPosition(x, y);
+    
+    // Snap to grid if enabled AND zone allows it
+    const snappedPos = shouldUseGrid && this.gridInfo?.snapTo 
+      ? this.snapToNearestHex(x, y)
+      : { x, y };
     const finalX = snappedPos.x;
     const finalY = snappedPos.y;
 
-    console.log('CanvasManager.addPiece:', { x, y, snappedTo: snappedPos, snapEnabled: this.gridInfo?.snapTo });
+    console.log('CanvasManager.addPiece:', { x, y, snappedTo: snappedPos, snapEnabled: this.gridInfo?.snapTo, shouldUseGrid });
 
     return new Promise((resolve, reject) => {
       fabric.FabricImage.fromURL(imageUrl, {
@@ -810,13 +862,19 @@ export class CanvasManager {
 
       // Snap to grid when drag ends (only on drop)
       if (obj && (obj as any).pieceId) {
-        const snapped = this.snapToNearestHex(obj.left || 0, obj.top || 0);
+        // Check zone at current position
+        const shouldUseGrid = this.findZoneAtPosition(obj.left || 0, obj.top || 0);
+        
+        // Snap only if zone allows it
+        const snapped = shouldUseGrid && this.gridInfo?.snapTo 
+          ? this.snapToNearestHex(obj.left || 0, obj.top || 0)
+          : { x: obj.left || 0, y: obj.top || 0 };
         obj.set({
           left: snapped.x,
           top: snapped.y,
         });
         this.canvas.renderAll();
-        console.log('CanvasManager: snapped on drag end', { id: (obj as any).pieceId, snapped });
+        console.log('CanvasManager: snapped on drag end', { id: (obj as any).pieceId, snapped, shouldUseGrid });
       }
     });
     
@@ -847,11 +905,11 @@ export class CanvasManager {
         clearTimeout(this.mouseOverTimeout);
         this.mouseOverTimeout = null;
       }
-      this.hideMouseOverPopup();
+this.hideMouseOverPopup();
     });
-  }
-}
-
+  } // End setupInteractions - keep class open for popup methods
+  
+  // Mouse-over popup methods - inside the class
   private showMouseOverPopup(mainObj: fabric.Object, mouseX: number, mouseY: number): void {
     this.hideMouseOverPopup();
     

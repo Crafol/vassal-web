@@ -85,6 +85,9 @@ export declare class CanvasManager {
     private panY;
     onSelectionChange?: SelectionCallback;
     private gridInfo;
+    private zones;
+    private mouseOverPopup;
+    private mouseOverTimeout;
     constructor(canvasElement: HTMLCanvasElement, options: RenderOptions);
     /**
      * Add board image to canvas
@@ -108,6 +111,11 @@ export declare class CanvasManager {
         top?: number;
         selectable?: boolean;
     }): Promise<fabric.Image>;
+    /**
+     * Find zone at position
+     * Returns the zone's useParentGrid setting, or true if no zone found (default behavior)
+     */
+    private findZoneAtPosition;
     /**
      * Add a game piece (counter) to the canvas
      */
@@ -196,6 +204,9 @@ export declare class CanvasManager {
      */
     dispose(): void;
     private setupInteractions;
+    private showMouseOverPopup;
+    private showTextPopup;
+    private hideMouseOverPopup;
 }
 /**
  * Extract map data from parsed module

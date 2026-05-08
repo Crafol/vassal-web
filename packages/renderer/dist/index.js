@@ -12,6 +12,11 @@ export class CanvasManager {
     onSelectionChange;
     // Grid info for snapping
     gridInfo = null;
+    // Zones for useParentGrid logic
+    zones = [];
+    // Mouse-over popup state
+    mouseOverPopup = null;
+    mouseOverTimeout = null;
     constructor(canvasElement, options) {
         this.canvas = new fabric.Canvas(canvasElement, {
             width: options.width,
@@ -60,6 +65,14 @@ export class CanvasManager {
                     };
                     console.log('CanvasManager: gridInfo saved for snapping:', this.gridInfo);
                 }
+                // Save zones for useParentGrid logic
+                if (layer.grid?.zones) {
+                    this.zones = layer.grid.zones;
+                    console.log('CanvasManager: saved zones:', this.zones.length, this.zones.map(z => ({ name: z.name, useParentGrid: z.useParentGrid })));
+                }
+                else {
+                    this.zones = [];
+                }
                 resolve(img);
             }).catch(reject);
         });
@@ -69,8 +82,13 @@ export class CanvasManager {
      * Uses RED color (#FF0000) for visibility
      */
     drawHexGrid(grid, boardX = 0, boardY = 0, boardWidth = 2000, boardHeight = 2000) {
-        const { dx, dy, x0 = 0, y0 = 0, sideways = false, dotsVisible = false } = grid;
-        console.log('drawHexGrid: params', { dx, dy, x0, y0, sideways, boardX, boardY, boardWidth, boardHeight });
+        const { dx, dy, x0 = 0, y0 = 0, sideways = false, dotsVisible = false, visible = true, color = '#FF0000' } = grid;
+        console.log('drawHexGrid: params', { dx, dy, x0, y0, sideways, boardX, boardY, boardWidth, boardHeight, visible, color, dotsVisible });
+        // If visible === false, skip drawing but keep snapTo functionality
+        if (!visible) {
+            console.log('drawHexGrid: grid hidden (visible=false), skipping draw but snapTo remains active');
+            return;
+        }
         // VASSAL: sideways=true → Flat Topped (rows horizontal), sideways=false → Pointy Topped
         const isFlatTop = sideways;
         // Cuando sideways=true (Flat Topped): horizontal = dy, vertical = dx
@@ -116,7 +134,7 @@ export class CanvasManager {
                     });
                 }
                 const hexPoly = new fabric.Polygon(points, {
-                    stroke: '#FF0000',
+                    stroke: color,
                     strokeWidth: 1.5,
                     fill: 'transparent',
                     selectable: false,
@@ -129,7 +147,7 @@ export class CanvasManager {
                         left: centerX,
                         top: centerY,
                         radius: 3,
-                        fill: '#FF0000',
+                        fill: color,
                         originX: 'center',
                         originY: 'center',
                         selectable: false,
@@ -190,6 +208,33 @@ export class CanvasManager {
         });
     }
     /**
+     * Find zone at position
+     * Returns the zone's useParentGrid setting, or true if no zone found (default behavior)
+     */
+    findZoneAtPosition(x, y) {
+        for (const zone of this.zones) {
+            // Parse zone path: "x1,y1;x2,y2;x3,y3;x4,y4" - rectangle
+            const points = zone.path.split(';').map(pair => {
+                const [px, py] = pair.split(',').map(Number);
+                return { x: px, y: py };
+            });
+            if (points.length >= 4) {
+                // Simple rectangle check: find min/max
+                const xs = points.map(p => p.x);
+                const ys = points.map(p => p.y);
+                const minX = Math.min(...xs);
+                const maxX = Math.max(...xs);
+                const minY = Math.min(...ys);
+                const maxY = Math.max(...ys);
+                if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+                    console.log(`[ZONE] Piece at (${Math.round(x)}, ${Math.round(y)}) in zone "${zone.name}" -> useParentGrid: ${zone.useParentGrid}`);
+                    return zone.useParentGrid !== false; // default true
+                }
+            }
+        }
+        return true; // Default: use parent grid
+    }
+    /**
      * Add a game piece (counter) to the canvas
      */
     async addPiece(pieceId, pieceName, imageUrl, x, y) {
@@ -197,11 +242,15 @@ export class CanvasManager {
             console.warn('CanvasManager.addPiece: no imageUrl provided');
             return null;
         }
-        // Snap to grid if enabled
-        const snappedPos = this.snapToNearestHex(x, y);
+        // Check zone at position to determine if should use grid
+        const shouldUseGrid = this.findZoneAtPosition(x, y);
+        // Snap to grid if enabled AND zone allows it
+        const snappedPos = shouldUseGrid && this.gridInfo?.snapTo
+            ? this.snapToNearestHex(x, y)
+            : { x, y };
         const finalX = snappedPos.x;
         const finalY = snappedPos.y;
-        console.log('CanvasManager.addPiece:', { x, y, snappedTo: snappedPos, snapEnabled: this.gridInfo?.snapTo });
+        console.log('CanvasManager.addPiece:', { x, y, snappedTo: snappedPos, snapEnabled: this.gridInfo?.snapTo, shouldUseGrid });
         return new Promise((resolve, reject) => {
             fabric.FabricImage.fromURL(imageUrl, {
                 crossOrigin: 'anonymous',
@@ -228,6 +277,7 @@ export class CanvasManager {
                 // Store piece data in the object
                 img.pieceId = pieceId;
                 img.pieceName = pieceName;
+                img.imageUrl = imageUrl;
                 // Save normal shadow reference for later
                 img.normalShadow = shadow;
                 // Create lifted shadow (farther, more diffuse)
@@ -599,19 +649,134 @@ export class CanvasManager {
             }
             // Snap to grid when drag ends (only on drop)
             if (obj && obj.pieceId) {
-                const snapped = this.snapToNearestHex(obj.left || 0, obj.top || 0);
+                // Check zone at current position
+                const shouldUseGrid = this.findZoneAtPosition(obj.left || 0, obj.top || 0);
+                // Snap only if zone allows it
+                const snapped = shouldUseGrid && this.gridInfo?.snapTo
+                    ? this.snapToNearestHex(obj.left || 0, obj.top || 0)
+                    : { x: obj.left || 0, y: obj.top || 0 };
                 obj.set({
                     left: snapped.x,
                     top: snapped.y,
                 });
                 this.canvas.renderAll();
-                console.log('CanvasManager: snapped on drag end', { id: obj.pieceId, snapped });
+                console.log('CanvasManager: snapped on drag end', { id: obj.pieceId, snapped, shouldUseGrid });
             }
         });
         // Also restore when selection cleared
         canvas.on('selection:cleared', () => {
             this.onSelectionChange?.({ selected: null, coords: null });
         });
+        // Mouse-over popup - show on hover
+        canvas.on('mouse:over', (opt) => {
+            const obj = opt.target;
+            if (!obj)
+                return;
+            const pieceId = obj.pieceId;
+            const pieceName = obj.pieceName;
+            if (!pieceId && !pieceName)
+                return;
+            // Get mouse position
+            const pointer = canvas.getPointer(opt.e);
+            if (this.mouseOverTimeout)
+                clearTimeout(this.mouseOverTimeout);
+            this.mouseOverTimeout = setTimeout(() => {
+                this.showMouseOverPopup(obj, pointer.x, pointer.y);
+            }, 400);
+        });
+        canvas.on('mouse:out', () => {
+            if (this.mouseOverTimeout) {
+                clearTimeout(this.mouseOverTimeout);
+                this.mouseOverTimeout = null;
+            }
+            this.hideMouseOverPopup();
+        });
+    } // End setupInteractions - keep class open for popup methods
+    // Mouse-over popup methods - inside the class
+    showMouseOverPopup(mainObj, mouseX, mouseY) {
+        this.hideMouseOverPopup();
+        // Find pieces near position
+        const nearby = [];
+        for (const obj of this.canvas.getObjects()) {
+            const pId = obj.pieceId;
+            const pName = obj.pieceName;
+            if (!pId && !pName)
+                continue;
+            const dist = Math.sqrt(((obj.left || 0) - mouseX) ** 2 + ((obj.top || 0) - mouseY) ** 2);
+            if (dist < 40)
+                nearby.push(obj);
+        }
+        if (nearby.length === 0)
+            return;
+        // Get image URLs
+        const urls = nearby.map(o => o.imageUrl).filter(Boolean);
+        if (urls.length === 0) {
+            this.showTextPopup(nearby, mouseX, mouseY);
+            return;
+        }
+        // Load images - full size
+        const promises = urls.slice(0, 4).map(url => fabric.FabricImage.fromURL(url, { crossOrigin: 'anonymous' })
+            .then(img => {
+            const maxSize = 200;
+            const scale = Math.min(1, maxSize / Math.max(img.width || 1, img.height || 1));
+            img.set({ scaleX: scale, scaleY: scale, originX: 'center', originY: 'center' });
+            return img;
+        })
+            .catch(() => null));
+        Promise.all(promises).then(imgs => {
+            const valid = imgs.filter((i) => i !== null);
+            if (valid.length === 0) {
+                this.showTextPopup(nearby, mouseX, mouseY);
+                return;
+            }
+            const pieceW = 120, gap = 10;
+            const totalW = valid.length * pieceW + (valid.length - 1) * gap;
+            const bg = new fabric.Rect({
+                width: totalW + 20, height: pieceW + 20,
+                fill: 'rgba(0,0,0,0.92)', rx: 10, ry: 10,
+                stroke: '#FFF', strokeWidth: 3, originX: 'center', originY: 'center'
+            });
+            valid.forEach((img, i) => {
+                img.set({ left: (i - (valid.length - 1) / 2) * (pieceW + gap), top: 0 });
+            });
+            let left = mouseX + 40, top = mouseY - pieceW / 2 - 15;
+            const cw = this.canvas.getWidth(), ch = this.canvas.getHeight();
+            if (left + totalW / 2 + 15 > cw)
+                left = mouseX - totalW / 2 - 40;
+            if (left < totalW / 2 + 10)
+                left = totalW / 2 + 10;
+            if (top < pieceW / 2 + 10)
+                top = mouseY + 40;
+            this.mouseOverPopup = new fabric.Group([bg, ...valid], {
+                left, top, selectable: false, evented: false, originX: 'center', originY: 'center'
+            });
+            this.canvas.add(this.mouseOverPopup);
+            this.canvas.renderAll();
+        });
+    }
+    showTextPopup(pieces, mx, my) {
+        const names = pieces.map(o => o.pieceName).slice(0, 4);
+        const txt = names.join('\n');
+        const text = new fabric.Text(txt, { fontSize: 14, fill: '#FFF', fontFamily: 'Arial', fontWeight: 'bold' });
+        const bb = text.getBoundingRect();
+        const bg = new fabric.Rect({
+            width: bb.width + 24, height: bb.height + 24,
+            fill: 'rgba(0,0,0,0.92)', rx: 10, ry: 10,
+            stroke: '#FFF', strokeWidth: 3, originX: 'center', originY: 'center'
+        });
+        let left = mx + 40, top = my - bb.height / 2 - 10;
+        if (left + bb.width / 2 + 15 > this.canvas.getWidth())
+            left = mx - bb.width / 2 - 40;
+        this.mouseOverPopup = new fabric.Group([bg, text], { left, top, selectable: false, evented: false, originX: 'center', originY: 'center' });
+        this.canvas.add(this.mouseOverPopup);
+        this.canvas.renderAll();
+    }
+    hideMouseOverPopup() {
+        if (this.mouseOverPopup) {
+            this.canvas.remove(this.mouseOverPopup);
+            this.mouseOverPopup = null;
+            this.canvas.renderAll();
+        }
     }
 }
 /**

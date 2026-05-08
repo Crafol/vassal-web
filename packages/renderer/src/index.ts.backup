@@ -58,6 +58,7 @@ export interface PlacedPiece {
   y: number;
   imageUrl?: string;
   angle?: number;
+  useParentGrid?: boolean;
 }
 
 export interface CanvasState {
@@ -103,10 +104,9 @@ export class CanvasManager {
     boardX: number;
     boardY: number;
   } | null = null;
-
-  // Mouse-over popup state
-  private mouseOverPopup: fabric.Group | null = null;
-  private mouseOverTimeout: ReturnType<typeof setTimeout> | null = null;
+  
+  // Zones for useParentGrid logic
+  private zones: ZoneData[] = [];
 
   constructor(canvasElement: HTMLCanvasElement, options: RenderOptions) {
     this.canvas = new fabric.Canvas(canvasElement, {
@@ -161,6 +161,14 @@ export class CanvasManager {
           };
           console.log('CanvasManager: gridInfo saved for snapping:', this.gridInfo);
         }
+        
+        // Save zones for useParentGrid logic
+        if (layer.grid?.zones) {
+          this.zones = layer.grid.zones;
+          console.log('CanvasManager: saved zones:', this.zones.length, this.zones.map(z => ({ name: z.name, path: z.path.substring(0, 30), useParentGrid: z.useParentGrid })));
+        } else {
+          console.log('CanvasManager: no zones in layer.grid');
+        }
 
         resolve(img);
       }).catch(reject);
@@ -172,9 +180,14 @@ export class CanvasManager {
    * Uses RED color (#FF0000) for visibility
    */
   drawHexGrid(grid: HexGridData, boardX: number = 0, boardY: number = 0, boardWidth: number = 2000, boardHeight: number = 2000): void {
-    const { dx, dy, x0 = 0, y0 = 0, sideways = false, dotsVisible = false } = grid;
-    console.log('drawHexGrid: params', { dx, dy, x0, y0, sideways, boardX, boardY, boardWidth, boardHeight });
-
+    const { dx, dy, x0 = 0, y0 = 0, sideways = false, dotsVisible = false, visible = true, color = '#FF0000' } = grid;
+    console.log('drawHexGrid: params', { dx, dy, x0, y0, sideways, dotsVisible, visible, color, boardX, boardY, boardWidth, boardHeight });
+    
+    if (!visible) {
+      console.log('drawHexGrid: grid hidden, skipping');
+      return;
+    }
+    
     // VASSAL: sideways=true → Flat Topped (rows horizontal), sideways=false → Pointy Topped
     const isFlatTop = sideways;
 
@@ -186,13 +199,12 @@ export class CanvasManager {
     const horizontalSpacing = isFlatTop ? dy : dx;
     const verticalSpacing = isFlatTop ? dx : dy;
 
-    const hexRadius = horizontalSpacing / Math.sqrt(3);
-
     console.log('drawHexGrid: start position', { startX, startY }, 'spacing', { horizontalSpacing, verticalSpacing });
 
     // Calcular cuántos hexágonos caben en el área del board
     const cols = Math.ceil(boardWidth / horizontalSpacing) + 2;
     const rows = Math.ceil(boardHeight / verticalSpacing) + 2;
+    const hexRadius = horizontalSpacing / Math.sqrt(3);
 
     console.log('drawHexGrid: grid size', { cols, rows, boardWidth, boardHeight });
 
@@ -230,7 +242,7 @@ export class CanvasManager {
         }
 
         const hexPoly = new fabric.Polygon(points, {
-          stroke: '#FF0000',
+          stroke: color,
           strokeWidth: 1.5,
           fill: 'transparent',
           selectable: false,
@@ -245,7 +257,7 @@ export class CanvasManager {
             left: centerX,
             top: centerY,
             radius: 3,
-            fill: '#FF0000',
+            fill: color,
             originX: 'center',
             originY: 'center',
             selectable: false,
@@ -258,7 +270,7 @@ export class CanvasManager {
     }
 
     this.canvas.renderAll();
-    console.log('CanvasManager: drew hex grid', { hexRadius, horizontalSpacing, verticalSpacing });
+    console.log('CanvasManager: drew hex grid', { hexRadius, horizontalSpacing, verticalSpacing }, color);
   }
 
   /**
@@ -318,7 +330,37 @@ export class CanvasManager {
         this.canvas.renderAll();
         resolve(img);
       }).catch(reject);
-    });
+});
+  }
+
+  /**
+   * Find zone at position
+   * Returns the zone's useParentGrid setting, or true if no zone found (default behavior)
+   */
+  private findZoneAtPosition(x: number, y: number): boolean {
+    for (const zone of this.zones) {
+      // Parse zone path: "x1,y1;x2,y2;x3,y3;x4,y4" - rectangle
+      const points = zone.path.split(';').map(pair => {
+        const [px, py] = pair.split(',').map(Number);
+        return { x: px, y: py };
+      });
+      
+      if (points.length >= 4) {
+        // Simple rectangle check: find min/max
+        const xs = points.map(p => p.x);
+        const ys = points.map(p => p.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        
+        if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+          console.log(`[ZONE] Piece at (${Math.round(x)}, ${Math.round(y)}) in zone "${zone.name}" -> useParentGrid: ${zone.useParentGrid}`);
+          return zone.useParentGrid !== false; // default true
+        }
+      }
+    }
+    return true; // Default: use parent grid
   }
 
   /**
@@ -329,19 +371,25 @@ export class CanvasManager {
     pieceName: string,
     imageUrl: string,
     x: number,
-    y: number
+    y: number,
+    useParentGrid?: boolean
   ): Promise<PlacedPiece | null> {
     if (!imageUrl) {
       console.warn('CanvasManager.addPiece: no imageUrl provided');
       return null;
     }
 
-    // Snap to grid if enabled
-    const snappedPos = this.snapToNearestHex(x, y);
+    // Auto-detect useParentGrid from zone if not provided
+    const shouldUseGrid = useParentGrid !== undefined ? useParentGrid : this.findZoneAtPosition(x, y);
+    
+    // Snap to grid if enabled AND useParentGrid is true
+    const snappedPos = shouldUseGrid && this.gridInfo?.snapTo 
+      ? this.snapToNearestHex(x, y)
+      : { x, y };
     const finalX = snappedPos.x;
     const finalY = snappedPos.y;
 
-    console.log('CanvasManager.addPiece:', { x, y, snappedTo: snappedPos, snapEnabled: this.gridInfo?.snapTo });
+    console.log('CanvasManager.addPiece:', { x, y, snappedTo: snappedPos, snapEnabled: this.gridInfo?.snapTo, useParentGrid: shouldUseGrid });
 
     return new Promise((resolve, reject) => {
       fabric.FabricImage.fromURL(imageUrl, {
@@ -371,7 +419,6 @@ export class CanvasManager {
         // Store piece data in the object
         (img as any).pieceId = pieceId;
         (img as any).pieceName = pieceName;
-        (img as any).imageUrl = imageUrl;
         
         // Save normal shadow reference for later
         (img as any).normalShadow = shadow;
@@ -382,9 +429,9 @@ export class CanvasManager {
           blur: 20,
           offsetX: 6,
           offsetY: 6,
-        });
+});
         (img as any).liftedShadow = liftedShadow;
-        
+
         this.canvas.add(img);
         this.canvas.setActiveObject(img);
         this.canvas.renderAll();
@@ -400,7 +447,227 @@ export class CanvasManager {
         console.error('CanvasManager.addPiece: failed to load image', err);
         reject(err);
       });
+      });
+  }
+
+  /**
+   * Find existing stack at position
+   */
+  private findStackAtPosition(x: number, y: number): Stack | null {
+    console.log(`[STACK] findStackAtPosition: checking (${Math.round(x)}, ${Math.round(y)}) against ${this.stacks.size} stacks, threshold: ${this.stackOverlapThreshold}`);
+    
+    for (const stack of this.stacks.values()) {
+      const dx = Math.abs(stack.snapX - x);
+      const dy = Math.abs(stack.snapY - y);
+      console.log(`[STACK]   stack ${stack.id}: snap(${Math.round(stack.snapX)}, ${Math.round(stack.snapY)}) -> dx=${Math.round(dx)}, dy=${Math.round(dy)}`);
+      
+      if (dx < this.stackOverlapThreshold && dy < this.stackOverlapThreshold) {
+        console.log(`[STACK]   -> MATCH!`);
+        return stack;
+      }
+    }
+    console.log(`[STACK]   -> no match found`);
+    return null;
+  }
+
+  /**
+   * Calculate offset for stacking (5% of piece size - visible displacement)
+   */
+  private calculateStackOffset(index: number, pieceWidth: number = 50, pieceHeight: number = 50): { x: number; y: number } {
+    const offsetX = pieceWidth * 0.05;
+    const offsetY = pieceHeight * 0.05;
+    return {
+      x: (index % 3) * offsetX - offsetX,
+      y: Math.floor(index / 3) * offsetY - offsetY,
+    };
+  }
+
+  /**
+   * Calculate deployed offset (10% of piece size - larger for individual selection)
+   */
+  private calculateDeployedOffset(index: number, pieceWidth: number = 50, pieceHeight: number = 50): { x: number; y: number } {
+    const spacingX = pieceWidth * 0.1;
+    const spacingY = pieceHeight * 0.1;
+    const rowSize = 5;
+    const row = Math.floor(index / rowSize);
+    const col = index % rowSize;
+    return {
+      x: col * spacingX,
+      y: row * spacingY + 30,
+    };
+  }
+
+  /**
+   * Setup hover and double-click events for stack pieces
+   */
+  private setupStackEvents(img: fabric.FabricImage): void {
+    // Hover - show preview
+    img.on('mouseover', () => {
+      const stackId = (img as any).stackId;
+      if (stackId) {
+        const stack = this.stacks.get(stackId);
+        if (stack && stack.pieces.length > 1) {
+          this.showStackPreview(stack);
+        }
+      }
     });
+
+    // Mouse out - hide preview
+    img.on('mouseout', () => {
+      this.hideStackPreview();
+    });
+
+    // Double click - toggle deploy
+    img.on('mousedblclick', () => {
+      const stackId = (img as any).stackId;
+      if (stackId) {
+        const stack = this.stacks.get(stackId);
+        if (stack) {
+          this.toggleStackDeploy(stack);
+        }
+      }
+    });
+  }
+
+  /**
+   * Show preview popup with all stack pieces
+   */
+  private showStackPreview(stack: Stack): void {
+    this.hideStackPreview();
+
+    const centerX = this.canvas.getWidth() / 2;
+    const centerY = this.canvas.getHeight() / 2;
+    const pieceSize = 60;
+    const spacing = 5;
+
+    const loadPromises = stack.pieces.map((sp, idx) => {
+      return fabric.FabricImage.fromURL(sp.piece.imageUrl || '', { crossOrigin: 'anonymous' })
+        .then(previewImg => {
+          previewImg.set({
+            left: idx * (pieceSize + spacing),
+            top: 0,
+            scaleX: pieceSize / (previewImg.width || pieceSize),
+            scaleY: pieceSize / (previewImg.height || pieceSize),
+          });
+          return previewImg;
+        })
+        .catch(() => null);
+    });
+
+    Promise.all(loadPromises).then(images => {
+      const validImages = images.filter((img): img is fabric.FabricImage => img !== null);
+      if (validImages.length === 0) return;
+
+      const totalWidth = validImages.length * (pieceSize + spacing);
+      const bgRect = new fabric.Rect({
+        left: -10, top: -10,
+        width: totalWidth + 20, height: pieceSize + 20,
+        fill: 'rgba(0,0,0,0.85)', rx: 8, ry: 8,
+        stroke: '#fff', strokeWidth: 2,
+      });
+
+      this.previewPopup = new fabric.Group([bgRect, ...validImages], {
+        left: centerX - totalWidth / 2,
+        top: centerY - pieceSize / 2,
+        selectable: false, evented: false,
+      });
+
+      this.canvas.add(this.previewPopup);
+      this.canvas.renderAll();
+    });
+  }
+
+  /**
+   * Hide preview popup
+   */
+  private hideStackPreview(): void {
+    if (this.previewPopup) {
+      this.canvas.remove(this.previewPopup);
+      this.previewPopup = null;
+      this.canvas.renderAll();
+    }
+  }
+
+  /**
+   * Toggle stack between deployed and normal mode
+   */
+  private toggleStackDeploy(stack: Stack): void {
+    const pieceCount = stack.pieces.length;
+    const newMode = stack.isDeployed ? 'NORMAL' : 'DEPLOYED';
+    console.log(`[STACK] Toggle mode | Stack ID: ${stack.id} | Pieces: ${pieceCount} | New mode: ${newMode}`);
+
+    if (stack.isDeployed) {
+      // Collapse to normal
+      stack.isDeployed = false;
+      stack.pieces.forEach((sp, idx) => {
+        const img = sp.fabricObject as fabric.FabricImage;
+        const w = img.width || 50;
+        const h = img.height || 50;
+        const offset = this.calculateStackOffset(idx, w, h);
+        img.set({
+          left: stack.snapX + offset.x,
+          top: stack.snapY + offset.y,
+        });
+        (img as any).stackOffset = offset;
+      });
+    } else {
+      // Deploy
+      stack.isDeployed = true;
+      stack.pieces.forEach((sp, idx) => {
+        const img = sp.fabricObject as fabric.FabricImage;
+        const w = img.width || 50;
+        const h = img.height || 50;
+        const offset = this.calculateDeployedOffset(idx, w, h);
+        img.set({
+          left: stack.snapX + offset.x,
+          top: stack.snapY + offset.y,
+        });
+        (img as any).stackOffset = offset;
+      });
+    }
+    this.canvas.renderAll();
+  }
+
+  /**
+   * Remove a piece from its stack (when moved far enough while deployed)
+   */
+  private removePieceFromStack(obj: fabric.Object, stack: Stack): void {
+    console.log('Removing piece from stack:', stack.id);
+
+    // Find and remove the piece from the stack
+    const pieceIndex = stack.pieces.findIndex(sp => sp.fabricObject === obj);
+    if (pieceIndex === -1) return;
+
+    // Remove from stack array
+    const [removedPiece] = stack.pieces.splice(pieceIndex, 1);
+
+    // Clear stack reference from the piece
+    (obj as any).stackId = undefined;
+
+    // If stack is now empty, remove the stack
+    if (stack.pieces.length === 0) {
+      this.stacks.delete(stack.id);
+      console.log('Stack now empty, removed');
+      return;
+    }
+
+    // Recalculate offsets for remaining pieces
+    stack.pieces.forEach((sp, idx) => {
+      const img = sp.fabricObject as fabric.FabricImage;
+      const w = img.width || 50;
+      const h = img.height || 50;
+      const offset = stack.isDeployed
+        ? this.calculateDeployedOffset(idx, w, h)
+        : this.calculateStackOffset(idx, w, h);
+      img.set({
+        left: stack.snapX + offset.x,
+        top: stack.snapY + offset.y,
+      });
+      (img as any).stackOffset = offset;
+    });
+
+    this.canvas.renderAll();
+    console.log('Piece removed, stack now has', stack.pieces.length, 'pieces');
   }
 
   /**
@@ -810,134 +1077,88 @@ export class CanvasManager {
 
       // Snap to grid when drag ends (only on drop)
       if (obj && (obj as any).pieceId) {
-        const snapped = this.snapToNearestHex(obj.left || 0, obj.top || 0);
-        obj.set({
-          left: snapped.x,
-          top: snapped.y,
-        });
+        const stackId = (obj as any).stackId;
+        const snapPos = this.snapToNearestHex(obj.left || 0, obj.top || 0);
+
+        if (stackId) {
+          // Update all pieces in stack to new snap position
+          const stack = this.stacks.get(stackId);
+          if (stack) {
+            const deltaX = snapPos.x - stack.snapX;
+            const deltaY = snapPos.y - stack.snapY;
+
+            stack.pieces.forEach((sp, idx) => {
+              const img = sp.fabricObject as fabric.FabricImage;
+              const w = img.width || 50;
+              const h = img.height || 50;
+              const offset = stack.isDeployed
+                ? this.calculateDeployedOffset(idx, w, h)
+                : this.calculateStackOffset(idx, w, h);
+
+              img.set({
+                left: snapPos.x + offset.x,
+                top: snapPos.y + offset.y,
+              });
+            });
+
+            stack.snapX = snapPos.x;
+            stack.snapY = snapPos.y;
+            console.log('Stack moved to:', stack.snapX, stack.snapY);
+          }
+        } else {
+          // Single piece - just snap
+          obj.set({
+            left: snapPos.x,
+            top: snapPos.y,
+          });
+          console.log('CanvasManager: snapped on drag end', { id: (obj as any).pieceId, snapPos });
+        }
         this.canvas.renderAll();
-        console.log('CanvasManager: snapped on drag end', { id: (obj as any).pieceId, snapped });
       }
+    });
+
+    // Move all stack pieces together when dragging one
+    canvas.on('object:moving', (opt) => {
+      const obj = opt.target;
+      if (!obj) return;
+
+      const stackId = (obj as any).stackId;
+      if (!stackId) return;
+
+      const stack = this.stacks.get(stackId);
+      if (!stack) return;
+
+      if (stack.isDeployed) {
+        // In deployed mode - check if piece is moved far enough to leave stack
+        const dx = Math.abs((obj.left || 0) - stack.snapX);
+        const dy = Math.abs((obj.top || 0) - stack.snapY);
+
+        if (dx > 100 || dy > 100) {
+          // Piece is being moved out of the stack
+          this.removePieceFromStack(obj, stack);
+        }
+        return;
+      }
+
+      // In normal mode - move all pieces together
+      const originalX = obj.left - (obj as any).stackOffset.x;
+      const originalY = obj.top - (obj as any).stackOffset.y;
+
+      stack.pieces.forEach((sp) => {
+        if (sp.fabricObject === obj) return;
+
+        const offset = sp.stackOffset;
+        (sp.fabricObject as fabric.FabricImage).set({
+          left: originalX + offset.x,
+          top: originalY + offset.y,
+        });
+      });
     });
     
     // Also restore when selection cleared
     canvas.on('selection:cleared', () => {
       this.onSelectionChange?.({ selected: null, coords: null });
     });
-    
-    // Mouse-over popup - show on hover
-    canvas.on('mouse:over', (opt) => {
-      const obj = opt.target;
-      if (!obj) return;
-      const pieceId = (obj as any).pieceId;
-      const pieceName = (obj as any).pieceName;
-      if (!pieceId && !pieceName) return;
-      
-      // Get mouse position
-      const pointer = canvas.getPointer(opt.e);
-      
-      if (this.mouseOverTimeout) clearTimeout(this.mouseOverTimeout);
-      this.mouseOverTimeout = setTimeout(() => {
-        this.showMouseOverPopup(obj, pointer.x, pointer.y);
-      }, 400);
-    });
-    
-    canvas.on('mouse:out', () => {
-      if (this.mouseOverTimeout) {
-        clearTimeout(this.mouseOverTimeout);
-        this.mouseOverTimeout = null;
-      }
-      this.hideMouseOverPopup();
-    });
-  }
-}
-
-  private showMouseOverPopup(mainObj: fabric.Object, mouseX: number, mouseY: number): void {
-    this.hideMouseOverPopup();
-    
-    // Find pieces near position
-    const nearby: fabric.Object[] = [];
-    for (const obj of this.canvas.getObjects()) {
-      const pId = (obj as any).pieceId;
-      const pName = (obj as any).pieceName;
-      if (!pId && !pName) continue;
-      const dist = Math.sqrt(((obj.left||0) - mouseX) ** 2 + ((obj.top||0) - mouseY) ** 2);
-      if (dist < 40) nearby.push(obj);
-    }
-    if (nearby.length === 0) return;
-    
-    // Get image URLs
-    const urls = nearby.map(o => (o as any).imageUrl).filter(Boolean);
-    if (urls.length === 0) {
-      this.showTextPopup(nearby, mouseX, mouseY);
-      return;
-    }
-    
-    // Load images - full size
-    const promises = urls.slice(0, 4).map(url => 
-      fabric.FabricImage.fromURL(url, { crossOrigin: 'anonymous' })
-        .then(img => {
-          const maxSize = 200;
-          const scale = Math.min(1, maxSize / Math.max(img.width||1, img.height||1));
-          img.set({ scaleX: scale, scaleY: scale, originX: 'center', originY: 'center' });
-          return img;
-        })
-        .catch(() => null)
-    );
-    
-    Promise.all(promises).then(imgs => {
-      const valid = imgs.filter((i): i is fabric.FabricImage => i !== null);
-      if (valid.length === 0) { this.showTextPopup(nearby, mouseX, mouseY); return; }
-      
-      const pieceW = 120, gap = 10;
-      const totalW = valid.length * pieceW + (valid.length-1) * gap;
-      const bg = new fabric.Rect({
-        width: totalW + 20, height: pieceW + 20,
-        fill: 'rgba(0,0,0,0.92)', rx: 10, ry: 10,
-        stroke: '#FFF', strokeWidth: 3, originX: 'center', originY: 'center'
-      });
-      
-      valid.forEach((img, i) => {
-        img.set({ left: (i - (valid.length-1)/2) * (pieceW + gap), top: 0 });
-      });
-      
-      let left = mouseX + 40, top = mouseY - pieceW/2 - 15;
-      const cw = this.canvas.getWidth(), ch = this.canvas.getHeight();
-      if (left + totalW/2 + 15 > cw) left = mouseX - totalW/2 - 40;
-      if (left < totalW/2 + 10) left = totalW/2 + 10;
-      if (top < pieceW/2 + 10) top = mouseY + 40;
-      
-      this.mouseOverPopup = new fabric.Group([bg, ...valid], {
-        left, top, selectable: false, evented: false, originX: 'center', originY: 'center'
-      });
-      this.canvas.add(this.mouseOverPopup);
-      this.canvas.renderAll();
-    });
-  }
-
-  private showTextPopup(pieces: fabric.Object[], mx: number, my: number): void {
-    const names = pieces.map(o => (o as any).pieceName).slice(0,4);
-    const txt = names.join('\n');
-    const text = new fabric.Text(txt, { fontSize: 14, fill: '#FFF', fontFamily: 'Arial', fontWeight: 'bold' });
-    const bb = text.getBoundingRect();
-    const bg = new fabric.Rect({
-      width: bb.width + 24, height: bb.height + 24,
-      fill: 'rgba(0,0,0,0.92)', rx: 10, ry: 10,
-      stroke: '#FFF', strokeWidth: 3, originX: 'center', originY: 'center'
-    });
-    let left = mx + 40, top = my - bb.height/2 - 10;
-    if (left + bb.width/2 + 15 > this.canvas.getWidth()) left = mx - bb.width/2 - 40;
-    this.mouseOverPopup = new fabric.Group([bg, text], { left, top, selectable: false, evented: false, originX: 'center', originY: 'center' });
-    this.canvas.add(this.mouseOverPopup);
-    this.canvas.renderAll();
-  }
-
-  private hideMouseOverPopup(): void {
-    if (this.mouseOverPopup) {
-      this.canvas.remove(this.mouseOverPopup);
-      this.mouseOverPopup = null;
-      this.canvas.renderAll();
-    }
   }
 }
 

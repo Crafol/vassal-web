@@ -1,0 +1,452 @@
+/**
+ * VASSAL Renderer - Canvas rendering with Fabric.js
+ */
+
+/// <reference types="fabric" />
+import * as fabric from 'fabric';
+import { Point } from 'fabric';
+import type { Canvas } from 'fabric';
+
+export interface RenderOptions {
+  width: number;
+  height: number;
+  backgroundColor?: string;
+}
+
+export interface HexGridData {
+  dx: number;
+  dy: number;
+  x0?: number;
+  y0?: number;
+  color?: string;
+  snapTo?: boolean;
+  visible?: boolean;
+  dotsVisible?: boolean;
+  cornersLegal?: boolean;
+  edgesLegal?: boolean;
+  sideways?: boolean;
+}
+
+export interface ZoneData {
+  name: string;
+  path: string;
+  locationFormat?: string;
+  highlightProperty?: string;
+  useHighlight?: boolean;
+  useParentGrid?: boolean;
+}
+
+export interface ZonedGridData {
+  hexGrid?: HexGridData;
+  zones?: ZoneData[];
+}
+
+export interface BoardLayer {
+  name: string;
+  imageUrl: string;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  grid?: ZonedGridData;
+}
+
+export interface PlacedPiece {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  imageUrl?: string;
+  angle?: number;
+  useParentGrid?: boolean;
+}
+
+export interface CanvasState {
+  panX: number;
+  panY: number;
+  zoom: number;
+}
+
+// Imperative methods to expose to parent
+export interface CanvasManagerHandle {
+  getPieces: () => PlacedPiece[];
+  getState: () => CanvasState;
+  getViewState: () => { zoom: number; panX: number; panY: number };
+  setViewState: (state: { zoom?: number; panX?: number; panY?: number }) => void;
+  addPieceAt: (piece: PlacedPiece, imageUrl: string) => Promise<void>;
+  clearPieces: () => void;
+}
+
+export interface SelectionInfo {
+  selected: PlacedPiece | null;
+  coords: { x: number; y: number } | null;
+}
+
+export type SelectionCallback = (info: SelectionInfo) => void;
+
+export class CanvasManager {
+  private canvas: fabric.Canvas;
+  private zoom: number = 1;
+  private panX: number = 0;
+  private panY: number = 0;
+  public onSelectionChange?: SelectionCallback;
+
+  // Grid info for snapping
+  private gridInfo: {
+    dx: number;
+    dy: number;
+    x0: number;
+    y0: number;
+    sideways: boolean;
+    snapTo: boolean;
+    cornersLegal: boolean;
+    edgesLegal: boolean;
+    boardX: number;
+    boardY: number;
+  } | null = null;
+  
+  // Zones for useParentGrid logic
+  private zones: ZoneData[] = [];
+
+  constructor(canvasElement: HTMLCanvasElement, options: RenderOptions) {
+    this.canvas = new fabric.Canvas(canvasElement, {
+      width: options.width,
+      height: options.height,
+      backgroundColor: options.backgroundColor || '#ffffff',
+      selection: true,
+      preserveObjectStacking: true,
+    });
+
+    this.setupInteractions();
+  }
+
+  /**
+   * Add board image to canvas
+   */
+  async addBoard(layer: BoardLayer): Promise<fabric.Image> {
+    return new Promise((resolve, reject) => {
+      fabric.FabricImage.fromURL(layer.imageUrl, {
+        crossOrigin: 'anonymous',
+      }).then((img) => {
+        img.set({
+          left: layer.x,
+          top: layer.y,
+          selectable: false,
+          evented: false,
+        });
+
+        this.canvas.add(img);
+        this.canvas.renderAll();
+
+        // Draw grid if present
+        console.log('CanvasManager.addBoard: layer.grid:', layer.grid, 'board pos:', { x: layer.x, y: layer.y, w: layer.width, h: layer.height });
+        if (layer.grid?.hexGrid) {
+          const hexGrid = layer.grid.hexGrid;
+          console.log('CanvasManager.addBoard: calling drawHexGrid with:', hexGrid);
+          this.drawHexGrid(hexGrid, layer.x, layer.y, layer.width || 2000, layer.height || 2000);
+
+          // Save grid info for snapping
+          const isFlatTop = hexGrid.sideways;
+          this.gridInfo = {
+            dx: hexGrid.dx,
+            dy: hexGrid.dy,
+            x0: isFlatTop ? (hexGrid.y0 || 0) : (hexGrid.x0 || 0),
+            y0: isFlatTop ? (hexGrid.x0 || 0) : (hexGrid.y0 || 0),
+            sideways: hexGrid.sideways || false,
+            snapTo: hexGrid.snapTo || false,
+            cornersLegal: hexGrid.cornersLegal || false,
+            edgesLegal: hexGrid.edgesLegal || false,
+            boardX: layer.x,
+            boardY: layer.y,
+          };
+          console.log('CanvasManager: gridInfo saved for snapping:', this.gridInfo);
+        }
+        
+        // Save zones for useParentGrid logic
+        if (layer.grid?.zones) {
+          this.zones = layer.grid.zones;
+          console.log('CanvasManager: saved zones:', this.zones.length, this.zones.map(z => ({ name: z.name, path: z.path.substring(0, 30), useParentGrid: z.useParentGrid })));
+        } else {
+          console.log('CanvasManager: no zones in layer.grid');
+        }
+
+        resolve(img);
+      }).catch(reject);
+    });
+  }
+
+  /**
+   * Draw hexagonal grid on canvas
+   * Uses RED color (#FF0000) for visibility
+   */
+  drawHexGrid(grid: HexGridData, boardX: number = 0, boardY: number = 0, boardWidth: number = 2000, boardHeight: number = 2000): void {
+    const { dx, dy, x0 = 0, y0 = 0, sideways = false, dotsVisible = false, visible = true, color = '#FF0000' } = grid;
+    console.log('drawHexGrid: params', { dx, dy, x0, y0, sideways, dotsVisible, visible, color, boardX, boardY, boardWidth, boardHeight });
+    
+    if (!visible) {
+      console.log('drawHexGrid: grid hidden, skipping');
+      return;
+    }
+    
+    // VASSAL: sideways=true → Flat Topped (rows horizontal), sideways=false → Pointy Topped
+    const isFlatTop = sideways;
+
+    // Cuando sideways=true (Flat Topped): horizontal = dy, vertical = dx
+    // Esto también aplica a la posición inicial del primer hex!
+    const startX = isFlatTop ? y0 : x0;
+    const startY = isFlatTop ? x0 : y0;
+
+    const horizontalSpacing = isFlatTop ? dy : dx;
+    const verticalSpacing = isFlatTop ? dx : dy;
+
+    console.log('drawHexGrid: start position', { startX, startY }, 'spacing', { horizontalSpacing, verticalSpacing });
+
+    // Calcular cuántos hexágonos caben en el área del board
+    const cols = Math.ceil(boardWidth / horizontalSpacing) + 2;
+    const rows = Math.ceil(boardHeight / verticalSpacing) + 2;
+    const hexRadius = horizontalSpacing / Math.sqrt(3);
+
+    console.log('drawHexGrid: grid size', { cols, rows, boardWidth, boardHeight });
+
+    // Dibujar hexágonos
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        let centerX = boardX + startX + col * horizontalSpacing;
+        let centerY = boardY + startY + row * verticalSpacing;
+
+        // Offset zigzag para honeycomb
+        if (isFlatTop) {
+          // Flat-top: offset horizontal en filas impares
+          if (row % 2 === 1) {
+            centerX += horizontalSpacing / 2;
+          }
+        } else {
+          // Pointy-top: offset vertical en columnas impares
+          if (col % 2 === 1) {
+            centerY += verticalSpacing / 2;
+          }
+        }
+
+        // Crear hexágono (6 vértices)
+        // Flat-top: caras horizontales (arriba/abajo) → primer vértice a 30°
+        // Pointy-top: puntas horizontales (izquierda/derecha) → primer vértice a 0°
+        const points: { x: number; y: number }[] = [];
+        for (let i = 0; i < 6; i++) {
+          const angleOffset = isFlatTop ? Math.PI / 6 : 0;
+          const angle = i * Math.PI / 3 + angleOffset;
+
+          points.push({
+            x: centerX + hexRadius * Math.cos(angle),
+            y: centerY + hexRadius * Math.sin(angle),
+          });
+        }
+
+        const hexPoly = new fabric.Polygon(points, {
+          stroke: color,
+          strokeWidth: 1.5,
+          fill: 'transparent',
+          selectable: false,
+          evented: false,
+          opacity: 0.8,
+        });
+
+        this.canvas.add(hexPoly);
+
+        if (dotsVisible) {
+          const dot = new fabric.Circle({
+            left: centerX,
+            top: centerY,
+            radius: 3,
+            fill: color,
+            originX: 'center',
+            originY: 'center',
+            selectable: false,
+            evented: false,
+            opacity: 0.7,
+          });
+          this.canvas.add(dot);
+        }
+      }
+    }
+
+    this.canvas.renderAll();
+    console.log('CanvasManager: drew hex grid', { hexRadius, horizontalSpacing, verticalSpacing }, color);
+  }
+
+  /**
+   * Draw zone outlines on canvas
+   * Uses a different color (e.g., blue) for zones
+   */
+  drawZones(zones: ZoneData[]): void {
+    for (const zone of zones) {
+      // Parse path: "x1,y1;x2,y2;x3,y3;x4,y4"
+      const points = zone.path.split(';').map(pair => {
+        const [x, y] = pair.split(',').map(Number);
+        return new fabric.Point(x, y);
+      });
+
+      if (points.length < 3) {
+        continue;
+      }
+
+      // Create polygon
+      const zonePoly = new fabric.Polygon(points as fabric.Point[], {
+        stroke: '#0000FF',
+        strokeWidth: 2,
+        fill: 'rgba(0, 0, 255, 0.1)',
+        selectable: false,
+        evented: false,
+        opacity: 0.8,
+      });
+
+      this.canvas.add(zonePoly);
+    }
+
+    this.canvas.renderAll();
+    console.log('CanvasManager: drew', zones.length, 'zones');
+  }
+
+  /**
+   * Add image from base64 data URL
+   */
+  async addImageFromDataUrl(
+    dataUrl: string,
+    options: {
+      left?: number;
+      top?: number;
+      selectable?: boolean;
+    } = {}
+  ): Promise<fabric.Image> {
+    return new Promise((resolve, reject) => {
+      fabric.FabricImage.fromURL(dataUrl).then((img) => {
+        img.set({
+          left: options.left ?? 0,
+          top: options.top ?? 0,
+          selectable: options.selectable ?? true,
+          hasControls: options.selectable ?? true,
+        });
+        
+        this.canvas.add(img);
+        this.canvas.renderAll();
+        resolve(img);
+      }).catch(reject);
+});
+  }
+
+  /**
+   * Find zone at position
+   * Returns the zone's useParentGrid setting, or true if no zone found (default behavior)
+   */
+  private findZoneAtPosition(x: number, y: number): boolean {
+    for (const zone of this.zones) {
+      // Parse zone path: "x1,y1;x2,y2;x3,y3;x4,y4" - rectangle
+      const points = zone.path.split(';').map(pair => {
+        const [px, py] = pair.split(',').map(Number);
+        return { x: px, y: py };
+      });
+      
+      if (points.length >= 4) {
+        // Simple rectangle check: find min/max
+        const xs = points.map(p => p.x);
+        const ys = points.map(p => p.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        
+        if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+          console.log(`[ZONE] Piece at (${Math.round(x)}, ${Math.round(y)}) in zone "${zone.name}" -> useParentGrid: ${zone.useParentGrid}`);
+          return zone.useParentGrid !== false; // default true
+        }
+      }
+    }
+    return true; // Default: use parent grid
+  }
+
+  /**
+   * Add a game piece (counter) to the canvas
+   */
+  async addPiece(
+    pieceId: string,
+    pieceName: string,
+    imageUrl: string,
+    x: number,
+    y: number,
+    useParentGrid?: boolean
+  ): Promise<PlacedPiece | null> {
+    if (!imageUrl) {
+      console.warn('CanvasManager.addPiece: no imageUrl provided');
+      return null;
+    }
+
+    // Auto-detect useParentGrid from zone if not provided
+    const shouldUseGrid = useParentGrid !== undefined ? useParentGrid : this.findZoneAtPosition(x, y);
+    
+    // Snap to grid if enabled AND useParentGrid is true
+    const snappedPos = shouldUseGrid && this.gridInfo?.snapTo 
+      ? this.snapToNearestHex(x, y)
+      : { x, y };
+    const finalX = snappedPos.x;
+    const finalY = snappedPos.y;
+
+    console.log('CanvasManager.addPiece:', { x, y, snappedTo: snappedPos, snapEnabled: this.gridInfo?.snapTo, useParentGrid: shouldUseGrid });
+
+    return new Promise((resolve, reject) => {
+      fabric.FabricImage.fromURL(imageUrl, {
+        crossOrigin: 'anonymous',
+      }).then((img) => {
+        // Add shadow for depth effect
+        const shadow = new fabric.Shadow({
+          color: 'rgba(0,0,0,0.4)',
+          blur: 8,
+          offsetX: 3,
+          offsetY: 3,
+        });
+
+        img.set({
+          left: finalX,
+          top: finalY,
+          originX: 'center',
+          originY: 'center',
+          selectable: true,
+          hasControls: false,
+          lockRotation: true,
+          lockScalingX: true,
+          lockScalingY: true,
+          shadow: shadow,
+        });
+        
+        // Store piece data in the object
+        (img as any).pieceId = pieceId;
+        (img as any).pieceName = pieceName;
+        
+        // Save normal shadow reference for later
+        (img as any).normalShadow = shadow;
+        
+        // Create lifted shadow (farther, more diffuse)
+        const liftedShadow = new fabric.Shadow({
+          color: 'rgba(0,0,0,0.5)',
+          blur: 20,
+          offsetX: 6,
+          offsetY: 6,
+});
+        (img as any).liftedShadow = liftedShadow;
+
+        this.canvas.add(img);
+        this.canvas.setActiveObject(img);
+        this.canvas.renderAll();
+
+        resolve({
+          id: pieceId,
+          name: pieceName,
+          x: finalX,
+          y: finalY,
+          imageUrl,
+        });
+      }).catch(err => {
+        console.error('CanvasManager.addPiece: failed to load image', err);
+        reject(err);
+      });
+      });
+  }
+

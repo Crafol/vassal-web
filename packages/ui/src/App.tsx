@@ -37,6 +37,23 @@ function App() {
   const [selectionInfo, setSelectionInfo] = useState<SelectionInfo | null>(null);
   const [boards, setBoards] = useState<BoardLayer[]>([]);
   const canvasRef = useRef<CanvasManagerHandle>(null);
+  const [canvasKey, setCanvasKey] = useState(0);
+
+  // Handle map change - reset canvas and force remount
+  const prevActiveMap = useRef<string | null>(null);
+  useEffect(() => {
+    if (activeMap && activeMap !== prevActiveMap.current) {
+      console.log('App: map changing from', prevActiveMap.current, 'to', activeMap);
+      prevActiveMap.current = activeMap;
+
+      // Reset boards to unmount old canvas
+      setBoards([]);
+
+      // Increment key to force complete remount of GameCanvas
+      setCanvasKey(k => k + 1);
+      console.log('App: incremented canvasKey for map change');
+    }
+  }, [activeMap]);
 
   // Compute boards when module or activeMap changes
   useEffect(() => {
@@ -59,7 +76,14 @@ function App() {
         }).filter(b => b.imageUrl);
 
         // Cargar imagenes para obtener dimensiones reales
+        const currentMapName = activeMap; // Capture current map name
         const loadImageDimensions = async () => {
+          // Verify map hasn't changed during loading
+          if (currentMapName !== activeMap) {
+            console.log('App: map changed while loading, aborting');
+            return [];
+          }
+
           const result = await Promise.all(layerData.map(async (layer) => {
             if (!layer.imageUrl) return layer;
             try {
@@ -79,8 +103,13 @@ function App() {
         };
 
         loadImageDimensions().then((layers: BoardLayer[]) => {
-          console.log('App: boards with dimensions:', layers.map(l => ({ name: l.name, w: l.width, h: l.height, hasGrid: !!l.grid })));
-          setBoards(layers);
+          // Only update if this is still the active map
+          if (activeMap === currentMapName) {
+            console.log('App: boards with dimensions:', layers.map(l => ({ name: l.name, w: l.width, h: l.height, hasGrid: !!l.grid })));
+            setBoards(layers);
+          } else {
+            console.log('App: map changed, not updating boards');
+          }
         });
       }
     }
@@ -123,15 +152,18 @@ function App() {
       
       const mapName = mod.maps[0]?.name || null;
       setModule(parsed);
-      setActiveMap(mapName);
-      
+setActiveMap(mapName);
+
+      // Reset piece window when loading new module
+      setActivePieceWindow(null);
+
       for (const setup of mod.setups) {
         if (setup.useFile) {
           setCurrentSetup(setup.name);
           break;
         }
       }
-      
+
       if (mod.pieceWindows.length > 0) {
         setActivePieceWindow(mod.pieceWindows[0].name);
       }
@@ -156,18 +188,21 @@ function App() {
         const parsed = await parseVmodFile(file);
         const mod = parsed.module;
         console.log('Module loaded:', mod.info.name);
-        
+
         const mapName = mod.maps[0]?.name || null;
         setModule(parsed);
         setActiveMap(mapName);
-        
+
+        // Reset piece window when loading new module
+        setActivePieceWindow(null);
+
         for (const setup of mod.setups) {
           if (setup.useFile) {
             setCurrentSetup(setup.name);
             break;
           }
         }
-        
+
         if (mod.pieceWindows.length > 0) {
           setActivePieceWindow(mod.pieceWindows[0].name);
         }
@@ -259,11 +294,9 @@ function App() {
         // Restore view state
         canvas.setViewState(saveData.viewState);
         
-        // Add pieces back - need to find their images
+        // Add pieces back
         for (const piece of saveData.pieces) {
-          // Try to find the piece in module images
           let imageUrl = '';
-          // Look through all piece windows to find this piece's image
           for (const pw of module.module.pieceWindows) {
             const found = pw.pieces.find(p => p.id === piece.id);
             if (found) {
@@ -314,7 +347,7 @@ function App() {
     if (module && activeMap) {
       return (
         <>
-          <GameCanvas key={activeMap} ref={canvasRef} images={module.images} mapName={activeMap} boards={boards} onSelectionChange={handleSelectionChange} />
+          <GameCanvas key={`${activeMap}-${canvasKey}`} ref={canvasRef} images={module.images} mapName={activeMap} boards={boards} onSelectionChange={handleSelectionChange} />
           <SelectionInfoPanel info={selectionInfo} />
         </>
       );

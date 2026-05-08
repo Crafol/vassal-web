@@ -17,6 +17,7 @@ export const GameCanvas = forwardRef<CanvasManagerHandle, GameCanvasProps>(funct
   const managerRef = useRef<CanvasManager | null>(null);
   const [loading, setLoading] = useState(true);
   const [placedPieces, setPlacedPieces] = useState<PlacedPiece[]>([]);
+  const initializedRef = useRef<string | null>(null); // Track which map has been initialized
 
   // Expose manager methods via ref
   useImperativeHandle(ref, () => ({
@@ -88,6 +89,7 @@ export const GameCanvas = forwardRef<CanvasManagerHandle, GameCanvasProps>(funct
 
   // Initialize canvas
   useEffect(() => {
+    // Skip if no boards or no canvas
     if (!canvasRef.current || !propBoards || propBoards.length === 0) {
       return;
     }
@@ -95,16 +97,31 @@ export const GameCanvas = forwardRef<CanvasManagerHandle, GameCanvasProps>(funct
     const container = canvasRef.current.parentElement;
     if (!container) return;
 
-    // Dispose old manager first
+    const boardKey = propBoards[0].name;
+    console.log('GameCanvas: checking map change from', initializedRef.current, 'to', boardKey);
+
+    // Always dispose old manager when changing maps
     if (managerRef.current) {
-      managerRef.current.dispose();
+      try {
+        managerRef.current.dispose();
+        console.log('GameCanvas: disposed old manager');
+      } catch (e) {
+        console.log('GameCanvas: error disposing manager', e);
+      }
       managerRef.current = null;
+    }
+
+    // Reset the canvas element to ensure clean state
+    try {
+      canvasRef.current.innerHTML = '';
+    } catch (e) {
+      console.log('GameCanvas: error clearing canvas', e);
     }
 
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 600;
 
-    console.log('GameCanvas: initializing canvas', width, height);
+    console.log('GameCanvas: initializing canvas', width, height, 'for map:', boardKey);
 
     managerRef.current = new CanvasManager(canvasRef.current, {
       width,
@@ -120,16 +137,23 @@ export const GameCanvas = forwardRef<CanvasManagerHandle, GameCanvasProps>(funct
     setLoading(true);
     managerRef.current.addBoard(propBoards[0]).then(() => {
       console.log('GameCanvas: board loaded successfully');
+      initializedRef.current = boardKey;
       setLoading(false);
     }).catch(err => {
       console.error('GameCanvas: Failed to load board:', err);
+      initializedRef.current = null;
       setLoading(false);
     });
 
+    // Cleanup when map changes or component unmounts
     return () => {
-      // Cleanup on unmount
+      console.log('GameCanvas: cleanup for map', boardKey);
       if (managerRef.current) {
-        managerRef.current.dispose();
+        try {
+          managerRef.current.dispose();
+        } catch (e) {
+          console.log('GameCanvas: error in cleanup', e);
+        }
         managerRef.current = null;
       }
     };

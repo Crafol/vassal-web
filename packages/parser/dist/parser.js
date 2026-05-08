@@ -299,13 +299,15 @@ export class VassalParser {
         const zoneEls = zonedGridEl.children.filter((el) => el.type === 'VASSAL.build.module.map.boardPicker.board.mapgrid.Zone' ||
             el.type === 'Zone');
         for (const zoneEl of zoneEls) {
+            const useParentGridAttr = zoneEl.attributes['useParentGrid'];
             const zone = {
                 name: zoneEl.attributes['name'] || '',
                 path: zoneEl.attributes['path'] || '',
                 locationFormat: zoneEl.attributes['locationFormat'] || '$name$',
                 highlightProperty: zoneEl.attributes['highlightProperty'] || '',
                 useHighlight: zoneEl.attributes['useHighlight'] === 'true',
-                useParentGrid: zoneEl.attributes['useParentGrid'] === 'true',
+                // Default to true if not specified (undefined or not set)
+                useParentGrid: useParentGridAttr === 'true' || useParentGridAttr === undefined,
             };
             if (zone.name && zone.path) {
                 result.zones.push(zone);

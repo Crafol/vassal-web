@@ -15,6 +15,12 @@ VASSAL Engine reimplemented in JavaScript for web browser. A board game engine t
 - Node.js >= 20.0.0
 - pnpm >= 8.0.0
 
+## Modulo de pruebas
+
+Donnerschlag_v1.22.vmod
+
+Es el modulo que se eta usando para las pruebas de desarrollo.
+
 ## Installation
 
 ```bash
@@ -120,3 +126,4 @@ Open source. Based on the [VASSAL](https://vassalengine.org/) project.
 
 - [VASSAL Engine](https://vassalengine.org/) - Original Java project
 - [Reference Manual](https://vassalengine.org/doc/latest/ReferenceManual/Concepts.html) - Module structure documentation
+- IA Opencode - MiniMax M2.5 Free OpenCode Zen
